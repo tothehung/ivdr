@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IVDR Document Management System</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- ChartJS for Visual Analytics Dashboard -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- SockJS and STOMP for WebSockets presence and alerts -->
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.5.1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+</head>
+<body>
+
+    <!-- Toast Alerts Container -->
+    <div id="toast-container"></div>
+
+    <!-- Modals Layer -->
+    <!-- 1. Create Workspace Modal -->
+    <div id="modal-workspace" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create Deal Room Workspace</h3>
+                <button class="modal-close" onclick="closeModal('modal-workspace')">&times;</button>
+            </div>
+            <form id="form-create-workspace" onsubmit="handleCreateWorkspace(event)">
+                <div class="form-group">
+                    <label for="ws-name">Workspace Name</label>
+                    <input type="text" id="ws-name" class="form-input" required placeholder="e.g. IVDR audit room A">
+                </div>
+                <div class="form-group">
+                    <label for="ws-desc">Description</label>
+                    <input type="text" id="ws-desc" class="form-input" placeholder="Enter short workspace description...">
+                </div>
+                <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem;">
+                    <input type="checkbox" id="ws-private" style="width: auto; transform: scale(1.2);">
+                    <label for="ws-private" style="margin-bottom: 0; cursor: pointer;">Private Workspace</label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" onclick="closeModal('modal-workspace')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Workspace</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 2. Upload Document Modal -->
+    <div id="modal-upload" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Upload Compliance Document</h3>
+                <button class="modal-close" onclick="closeModal('modal-upload')">&times;</button>
+            </div>
+            <form id="form-upload-doc" onsubmit="handleUploadDocument(event)">
+                <div class="form-group">
+                    <label for="doc-file">Select File</label>
+                    <input type="file" id="doc-file" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label for="doc-name">Document Name</label>
+                    <input type="text" id="doc-name" class="form-input" required placeholder="Compliance title...">
+                </div>
+                <div class="form-group">
+                    <label for="doc-desc">Description</label>
+                    <input type="text" id="doc-desc" class="form-input" placeholder="Enter brief document description...">
+                </div>
+                <div class="form-group">
+                    <label for="doc-tags">Tags (comma-separated)</label>
+                    <input type="text" id="doc-tags" class="form-input" placeholder="e.g. audit, ivdr, compliance">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" onclick="closeModal('modal-upload')">Cancel</button>
+                    <button type="submit" class="btn btn-success">Upload</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 3. Add Member Modal -->
+    <div id="modal-member" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Invite Member to Workspace</h3>
+                <button class="modal-close" onclick="closeModal('modal-member')">&times;</button>
+            </div>
+            <form id="form-add-member" onsubmit="handleAddMember(event)">
+                <div class="form-group">
+                    <label for="member-user-id">User ID (UUID)</label>
+                    <input type="text" id="member-user-id" class="form-input" required placeholder="User UUID...">
+                </div>
+                <div class="form-group">
+                    <label for="member-role">Assign Role</label>
+                    <select id="member-role" class="form-input" style="background: #0f172b;">
+                        <option value="VIEWER">VIEWER (Read-only)</option>
+                        <option value="EDITOR">EDITOR (Read/Write)</option>
+                        <option value="OWNER">OWNER (Full Admin)</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" onclick="closeModal('modal-member')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Member</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 4. Explanations AI Modal -->
+    <div id="modal-ai-explain" class="modal-overlay">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3>AI Security Anomaly Explanation</h3>
+                <button class="modal-close" onclick="closeModal('modal-ai-explain')">&times;</button>
+            </div>
+            <div class="summary-container" style="background: rgba(15,23,42,0.6); max-height: 400px; overflow-y: auto;">
+                <p id="ai-explanation-text">Asking AI model to analyze the anomaly event logs... please wait...</p>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-primary" onclick="closeModal('modal-ai-explain')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==========================================
+         SCREENS (Visible dynamically)
+         ========================================== -->
+
+    <!-- Screen A: Auth Register -->
+    <div id="screen-register" class="auth-container view-section active">
+        <div class="auth-card">
+            <div class="auth-header">
+                <h1>IVDR Compliance</h1>
+                <p>Register a new tenant organization</p>
+            </div>
+            <form onsubmit="handleRegister(event)">
+                <div class="form-group">
+                    <label for="reg-org">Organization Name</label>
+                    <input type="text" id="reg-org" class="form-input" required placeholder="e.g. BioTech MedLab">
+                </div>
+                <div class="form-group">
+                    <label for="reg-name">Full Name (Admin)</label>
+                    <input type="text" id="reg-name" class="form-input" required placeholder="John Doe">
+                </div>
+                <div class="form-group">
+                    <label for="reg-email">Email Address</label>
+                    <input type="email" id="reg-email" class="form-input" required placeholder="john@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="reg-pass">Password (Min 8 chars)</label>
+                    <input type="password" id="reg-pass" class="form-input" required placeholder="••••••••">
+                </div>
+                <button type="submit" class="btn btn-primary">Create Account</button>
+            </form>
+            <div class="auth-footer">
+                <p>Already registered? <a href="#" onclick="showScreen('screen-login')">Sign In</a></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Screen B: Auth Login -->
+    <div id="screen-login" class="auth-container view-section">
+        <div class="auth-card">
+            <div class="auth-header">
+                <h1>Welcome Back</h1>
+                <p>Sign in to your compliance workspace</p>
+            </div>
+            <form onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="login-email">Email Address</label>
+                    <input type="email" id="login-email" class="form-input" required placeholder="john@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="login-pass">Password</label>
+                    <input type="password" id="login-pass" class="form-input" required placeholder="••••••••">
+                </div>
+                <button type="submit" class="btn btn-primary">Authenticate</button>
+            </form>
+            <div class="auth-footer">
+                <p>Need a tenant organization? <a href="#" onclick="showScreen('screen-register')">Register Now</a></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Screen C: Main Application Area -->
+    <div id="screen-app" class="app-layout view-section">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div>
+                <div class="logo-section">
+                    <h2>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        IVDR Portal
+                    </h2>
+                </div>
+                <ul class="nav-menu">
+                    <li class="nav-item active" onclick="navigateTab('tab-workspaces')">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                        Workspaces
+                    </li>
+                    <li id="nav-analytics" class="nav-item" onclick="navigateTab('tab-analytics')">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                        Analytics
+                    </li>
+                    <li id="nav-logs" class="nav-item" onclick="navigateTab('tab-logs')">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+                        Audit Logs
+                    </li>
+                </ul>
+            </div>
+            <div class="user-profile">
+                <div class="user-info">
+                    <div id="user-avatar" class="avatar">U</div>
+                    <div class="user-detail">
+                        <h4 id="user-display-name">Loading...</h4>
+                        <p id="user-display-role">Loading...</p>
+                    </div>
+                </div>
+                <button class="btn btn-outline" style="padding: 0.6rem;" onclick="handleLogout()">Sign Out</button>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <div class="blob blob-1"></div>
+            <div class="blob blob-2"></div>
+
+            <!-- Tab 1: Workspaces List -->
+            <div id="tab-workspaces" class="view-section active">
+                <div class="header-bar">
+                    <div>
+                        <h1>Deal Room Workspaces</h1>
+                        <p style="color: var(--text-secondary); margin-top: 0.2rem;">Select or create a workspace to manage compliance documentation</p>
+                    </div>
+                    <button class="btn btn-primary" style="width: auto; padding: 0.8rem 1.5rem;" onclick="openModal('modal-workspace')">
+                        + New Workspace
+                    </button>
+                </div>
+                <div id="workspace-list-cards" class="dashboard-grid">
+                    <!-- Dynamic cards loaded via JS -->
+                </div>
+            </div>
+
+            <!-- Tab 1B: Workspace Detail (Triggered when entering a workspace) -->
+            <div id="tab-workspace-detail" class="view-section">
+                <div class="header-bar" style="margin-bottom: 1.5rem;">
+                    <div>
+                        <button class="btn btn-outline" style="width: auto; padding: 0.4rem 1rem; font-size: 0.8rem; margin-bottom: 0.8rem; display: flex; align-items: center; gap: 0.4rem;" onclick="navigateTab('tab-workspaces')">
+                            &larr; Back
+                        </button>
+                        <h1 id="active-ws-name">Workspace Detail</h1>
+                        <p id="active-ws-desc" style="color: var(--text-secondary); margin-top: 0.2rem;">Description loading...</p>
+                    </div>
+                    <div style="display: flex; gap: 1rem;">
+                        <button class="btn btn-outline" style="width: auto; padding: 0.8rem 1.5rem;" onclick="openModal('modal-member')">
+                            + Invite Member
+                        </button>
+                        <button id="btn-upload-trigger" class="btn btn-success" style="width: auto; padding: 0.8rem 1.5rem;" onclick="openModal('modal-upload')">
+                            Upload Document
+                        </button>
+                    </div>
+                </div>
+
+                <div class="workspace-layout">
+                    <!-- Left panel: Documents list -->
+                    <div>
+                        <h3 style="margin-bottom: 1rem;">Documents</h3>
+                        <div class="table-container">
+                            <table id="document-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Size</th>
+                                        <th>Status</th>
+                                        <th>Uploaded By</th>
+                                        <th>Created At</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="document-list-body">
+                                    <!-- Dynamic rows loaded via JS -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Selected Document Details (AI summary trigger) -->
+                        <div id="selected-doc-panel" style="display: none; margin-top: 2rem;" class="card-premium">
+                            <h3 id="selected-doc-name" style="margin-bottom: 0.5rem;">Document Details</h3>
+                            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;" id="selected-doc-tags">
+                                <!-- Tags dynamically loaded -->
+                            </div>
+                            <p id="selected-doc-desc" style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">Description loading...</p>
+                            
+                            <h4 style="margin-bottom: 0.5rem; font-size: 0.9rem;">AI Compliance Summary</h4>
+                            <div id="ai-summary-box" class="summary-container">
+                                No summary generated yet. Click the button below to generate one.
+                            </div>
+                            <button id="btn-generate-summary" class="btn btn-primary" style="width: auto; padding: 0.6rem 1.2rem; font-size: 0.85rem; margin-top: 1rem;" onclick="triggerAiSummary()">
+                                Generate AI Summary
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Right panel: Presence list -->
+                    <div>
+                        <div class="presence-panel">
+                            <h3>
+                                <span class="status-dot"></span>
+                                Connected Users
+                            </h3>
+                            <ul id="presence-user-list" class="presence-list">
+                                <!-- Active users loaded via WebSockets -->
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 2: Analytics -->
+            <div id="tab-analytics" class="view-section">
+                <div class="header-bar">
+                    <div>
+                        <h1>Visual Analytics Dashboard</h1>
+                        <p style="color: var(--text-secondary); margin-top: 0.2rem;">Overview of multi-tenant security telemetry and logs</p>
+                    </div>
+                </div>
+
+                <div class="dashboard-grid">
+                    <div class="card-premium">
+                        <div class="card-title">Total Active Documents</div>
+                        <div id="stats-total-docs" class="card-value">-</div>
+                        <div class="card-desc">Active document count in workspace</div>
+                    </div>
+                    <div class="card-premium">
+                        <div class="card-title">Total Downloads</div>
+                        <div id="stats-total-downloads" class="card-value">-</div>
+                        <div class="card-desc">Downloads counted across workspace logs</div>
+                    </div>
+                    <div class="card-premium">
+                        <div class="card-title">Active Collaborators</div>
+                        <div id="stats-active-users" class="card-value">-</div>
+                        <div class="card-desc">Connected collaborators currently active</div>
+                    </div>
+                </div>
+
+                <div class="analytics-grid">
+                    <!-- Timeline chart -->
+                    <div class="chart-container">
+                        <h4 style="margin-bottom: 1rem;">Daily Activity Timeline</h4>
+                        <div style="flex-grow: 1; position: relative;">
+                            <canvas id="chart-timeline"></canvas>
+                        </div>
+                    </div>
+                    <!-- Heatmap placeholder or statistics -->
+                    <div class="chart-container">
+                        <h4 style="margin-bottom: 1rem;">Document Download Heatmap</h4>
+                        <div style="flex-grow: 1; position: relative;">
+                            <canvas id="chart-heatmap"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 3: Audit Logs -->
+            <div id="tab-logs" class="view-section">
+                <div class="header-bar">
+                    <div>
+                        <h1>Audit Trail Explorer</h1>
+                        <p style="color: var(--text-secondary); margin-top: 0.2rem;">Immutable, cryptographically signed security audit logs</p>
+                    </div>
+                    <div style="display: flex; gap: 1rem;">
+                        <button class="btn btn-outline" style="width: auto; padding: 0.8rem 1.2rem; font-size: 0.85rem;" onclick="loadAuditLogs(true)">
+                            Show Anomalies Only
+                        </button>
+                        <button class="btn btn-primary" style="width: auto; padding: 0.8rem 1.2rem; font-size: 0.85rem;" onclick="loadAuditLogs(false)">
+                            Refresh Logs
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table id="logs-table">
+                        <thead>
+                            <tr>
+                                <th>Event Type</th>
+                                <th>Actor ID</th>
+                                <th>Resource Type</th>
+                                <th>Resource ID</th>
+                                <th>Security Check</th>
+                                <th>Timestamp</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logs-list-body">
+                            <!-- Dynamic rows loaded via JS -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
+                    <button id="btn-logs-prev" class="btn btn-outline" style="width: auto; padding: 0.5rem 1.2rem;" onclick="paginateLogs(-1)">Prev</button>
+                    <button id="btn-logs-next" class="btn btn-outline" style="width: auto; padding: 0.5rem 1.2rem;" onclick="paginateLogs(1)">Next</button>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- UI Core Logic Javascript -->
+    <script src="js/app.js"></script>
+</body>
+</html>
