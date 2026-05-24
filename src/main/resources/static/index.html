@@ -213,6 +213,7 @@
                     <div class="user-detail">
                         <h4 id="user-display-name">Loading...</h4>
                         <p id="user-display-role">Loading...</p>
+                        <p id="user-display-id" style="font-size: 0.65rem; color: var(--text-secondary); cursor: pointer; text-decoration: underline; margin-top: 0.2rem;" onclick="navigator.clipboard.writeText(this.title); showToast('Copied', 'Your User ID has been copied to clipboard.', 'success');" title="">ID: Loading...</p>
                     </div>
                 </div>
                 <button class="btn btn-outline" style="padding: 0.6rem;" onclick="handleLogout()">Sign Out</button>
@@ -289,6 +290,11 @@
                                 <!-- Tags dynamically loaded -->
                             </div>
                             <p id="selected-doc-desc" style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">Description loading...</p>
+                            
+                            <h4 style="margin-bottom: 0.5rem; font-size: 0.9rem; margin-top: 1.5rem;">File Preview</h4>
+                            <div id="doc-preview-box" class="summary-container" style="max-height: 320px; overflow: auto; display: flex; justify-content: center; align-items: center; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+                                <span style="color: var(--text-secondary); font-size: 0.85rem;">Select file to preview.</span>
+                            </div>
                             
                             <h4 style="margin-bottom: 0.5rem; font-size: 0.9rem;">AI Compliance Summary</h4>
                             <div id="ai-summary-box" class="summary-container">

@@ -126,11 +126,21 @@ async function request(path, options = {}) {
         return null;
     }
 
-    const json = await response.json();
-    if (!response.ok) {
-        throw new Error(json.message || "An unexpected API error occurred.");
+    let json = null;
+    const text = await response.text();
+    if (text) {
+        try {
+            json = JSON.parse(text);
+        } catch (e) {
+            json = { message: text };
+        }
     }
-    return json.data;
+
+    if (!response.ok) {
+        throw new Error((json && json.message) || `Request failed with status ${response.status}`);
+    }
+    if (!json) return null;
+    return json.data !== undefined ? json.data : json;
 }
 
 async function rotateTokens() {
@@ -478,10 +488,13 @@ async function handleUploadDocument(e) {
 
     const formData = new FormData();
     formData.append("file", file);
-    // Spring expects request part or fields inside UploadRequest parameter
-    formData.append("req", new Blob([JSON.stringify({ name, description, tags })], {
-        type: "application/json"
-    }));
+    formData.append("name", name);
+    if (description) {
+        formData.append("description", description);
+    }
+    if (tags && tags.length > 0) {
+        tags.forEach(t => formData.append("tags", t));
+    }
 
     try {
         await request(`/workspaces/${activeWorkspaceId}/documents/upload`, {
@@ -501,26 +514,33 @@ async function handleUploadDocument(e) {
 }
 
 async function downloadDocument(docId) {
-    if (!activeWorkspaceId) return;
+    const workspaceId = activeWorkspaceId;
+    if (!workspaceId) return;
     try {
-        const data = await request(`/workspaces/${activeWorkspaceId}/documents/${docId}/download-url`);
+        const data = await request(`/workspaces/${workspaceId}/documents/${docId}/download-url`);
         showToast("Download Initialized", "Secure presigned download link generated.", "success");
-        window.open(data.presignedUrl, "_blank");
+        // Translate hostname from Docker internal minio:9000 to local environment hostname
+        let url = data.presignedUrl;
+        if (url && url.includes("://minio:9000")) {
+            url = url.replace("://minio:9000", "://" + (window.location.hostname || "localhost") + ":9000");
+        }
+        window.open(url, "_blank");
     } catch (err) {
         showToast("Download Blocked", err.message, "danger");
     }
 }
 
 async function deleteDocument(docId) {
-    if (!activeWorkspaceId) return;
+    const workspaceId = activeWorkspaceId;
+    if (!workspaceId) return;
     if (!confirm("Are you sure you want to soft delete this document?")) return;
 
     try {
-        await request(`/workspaces/${activeWorkspaceId}/documents/${docId}`, {
+        await request(`/workspaces/${workspaceId}/documents/${docId}`, {
             method: "DELETE"
         });
         showToast("Success", "Document soft deleted.", "success");
-        loadDocuments(activeWorkspaceId);
+        loadDocuments(workspaceId);
     } catch (err) {
         showToast("Deletion Blocked", err.message, "danger");
     }
@@ -528,13 +548,21 @@ async function deleteDocument(docId) {
 
 async function handleAddMember(e) {
     e.preventDefault();
-    if (!activeWorkspaceId) return;
+    const workspaceId = activeWorkspaceId;
+    if (!workspaceId) return;
 
-    const userId = document.getElementById("member-user-id").value;
+    const userId = document.getElementById("member-user-id").value.trim();
     const role = document.getElementById("member-role").value;
 
+    // UUID v4 format validation
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(userId)) {
+        showToast("Validation Error", "Invalid User ID format. Please enter a valid 36-character UUID.", "danger");
+        return;
+    }
+
     try {
-        await request(`/workspaces/${activeWorkspaceId}/members`, {
+        await request(`/workspaces/${workspaceId}/members`, {
             method: "POST",
             body: JSON.stringify({ userId, role })
         });
@@ -618,6 +646,66 @@ function selectDocument(doc) {
         summaryBox.textContent = doc.aiSummary;
     } else {
         summaryBox.textContent = "No summary generated yet. Click the button below to generate one.";
+    }
+
+    // Load Document Preview
+    loadDocPreview(doc);
+}
+
+async function loadDocPreview(doc) {
+    const workspaceId = activeWorkspaceId;
+    const previewBox = document.getElementById("doc-preview-box");
+    previewBox.innerHTML = `<span style="color: var(--text-secondary); font-size: 0.85rem;">Loading preview...</span>`;
+    
+    try {
+        const data = await request(`/workspaces/${workspaceId}/documents/${doc.id}/download-url`);
+        let url = data.presignedUrl;
+        if (url && url.includes("://minio:9000")) {
+            url = url.replace("://minio:9000", "://" + (window.location.hostname || "localhost") + ":9000");
+        }
+        
+        const contentType = doc.contentType ? doc.contentType.toLowerCase() : "";
+        
+        if (contentType.startsWith("image/")) {
+            previewBox.innerHTML = `
+                <img src="${url}" alt="${doc.name}" style="max-width: 100%; max-height: 280px; object-fit: contain; border-radius: 4px; display: block;" />
+            `;
+        } else if (contentType === "application/pdf") {
+            previewBox.innerHTML = `
+                <iframe src="${url}" style="width: 100%; height: 300px; border: none; background: white; border-radius: 4px;"></iframe>
+            `;
+        } else if (contentType.startsWith("text/") || contentType === "application/json" || contentType === "application/javascript") {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error("Could not fetch text content");
+                const text = await response.text();
+                const escaped = text
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+                previewBox.innerHTML = `
+                    <pre style="width: 100%; max-height: 280px; font-family: monospace; font-size: 0.8rem; color: var(--text-primary); text-align: left; margin: 0; white-space: pre-wrap; word-break: break-all; overflow-y: auto;">${escaped}</pre>
+                `;
+            } catch (fetchErr) {
+                previewBox.innerHTML = `
+                    <span style="color: var(--danger); font-size: 0.85rem;">Failed to load text content: ${fetchErr.message}</span>
+                `;
+            }
+        } else {
+            previewBox.innerHTML = `
+                <div style="text-align: center; padding: 1rem; display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    <div style="color: var(--text-secondary); font-size: 0.85rem;">Preview not available for this file type (${doc.contentType || "unknown"})</div>
+                    <a href="${url}" target="_blank" class="btn btn-outline" style="width: auto; display: inline-flex; padding: 0.4rem 1rem; font-size: 0.8rem;">Open in New Tab</a>
+                </div>
+            `;
+        }
+    } catch (err) {
+        previewBox.innerHTML = `
+            <span style="color: var(--danger); font-size: 0.85rem;">Failed to fetch download link for preview: ${err.message}</span>
+        `;
     }
 }
 
@@ -716,14 +804,15 @@ async function explainAnomaly(logId) {
 // --- tab-analytics ---
 
 async function loadAnalytics() {
-    if (!activeWorkspaceId) {
+    const workspaceId = activeWorkspaceId;
+    if (!workspaceId) {
         showToast("Notice", "Please select a Deal Room workspace from Tab 1 to populate analytics.", "info");
         return;
     }
 
     try {
         // 1. Load Stats
-        const stats = await request(`/analytics/workspace/${activeWorkspaceId}/stats`);
+        const stats = await request(`/analytics/workspace/${workspaceId}/stats`);
         document.getElementById("stats-total-docs").textContent = stats.totalDocs || 0;
         document.getElementById("stats-total-downloads").textContent = stats.totalDownloads || 0;
         document.getElementById("stats-active-users").textContent = stats.activeUsers || 0;
@@ -733,7 +822,7 @@ async function loadAnalytics() {
         renderTimelineChart(timeline);
 
         // 3. Load Heatmap data
-        const heatmap = await request(`/analytics/workspace/${activeWorkspaceId}/heatmap`);
+        const heatmap = await request(`/analytics/workspace/${workspaceId}/heatmap`);
         renderHeatmapChart(heatmap);
 
     } catch (err) {
@@ -819,6 +908,14 @@ function initApp() {
     document.getElementById("user-avatar").textContent = authState.user.fullName.substring(0,2).toUpperCase();
     document.getElementById("user-display-name").textContent = authState.user.fullName;
     document.getElementById("user-display-role").textContent = authState.user.role;
+    
+    const userId = authState.user.userId;
+    const shortId = userId ? (userId.substring(0, 8) + "...") : "unknown";
+    const userDisplayId = document.getElementById("user-display-id");
+    if (userDisplayId) {
+        userDisplayId.textContent = "ID: " + shortId;
+        userDisplayId.title = userId || "";
+    }
 
     // Show/hide security elements based on roles
     const isAdmin = authState.user.role === "ADMIN" || authState.user.role === "MANAGER";

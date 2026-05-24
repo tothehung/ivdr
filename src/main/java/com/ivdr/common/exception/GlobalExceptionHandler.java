@@ -130,7 +130,22 @@ public class GlobalExceptionHandler {
     }
 
     // -----------------------------------------------------------------------
-    // 5. Generic catch-all — unexpected runtime exceptions
+    // 5. HttpMessageNotReadableException — Malformed request body exceptions
+    // -----------------------------------------------------------------------
+
+    /**
+     * Handles payload deserialization failures (e.g. invalid UUID formats or bad JSON structures).
+     */
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMessageNotReadable(
+            org.springframework.http.converter.HttpMessageNotReadableException ex) {
+        log.warn("HttpMessageNotReadableException: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("Invalid request payload. Please ensure values (such as User IDs) are formatted correctly."));
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. Generic catch-all — unexpected runtime exceptions
     // -----------------------------------------------------------------------
 
     /**

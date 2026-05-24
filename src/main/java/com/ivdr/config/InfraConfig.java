@@ -68,6 +68,9 @@ public class InfraConfig {
     @Value("${app.storage.s3.endpoint:}")
     private String s3Endpoint;
 
+    @Value("${app.storage.s3.presigned-endpoint:}")
+    private String s3PresignedEndpoint;
+
     @Value("${app.storage.s3.region:ap-southeast-1}")
     private String s3Region;
 
@@ -107,9 +110,13 @@ public class InfraConfig {
                         .pathStyleAccessEnabled(true)
                         .build());
 
-        // Override endpoint for local MinIO
-        if (s3Endpoint != null && !s3Endpoint.isBlank()) {
-            builder.endpointOverride(URI.create(s3Endpoint));
+        // Override endpoint for local MinIO URL generation
+        String endpoint = s3PresignedEndpoint != null && !s3PresignedEndpoint.isBlank() 
+                ? s3PresignedEndpoint 
+                : s3Endpoint;
+
+        if (endpoint != null && !endpoint.isBlank()) {
+            builder.endpointOverride(URI.create(endpoint));
         }
 
         return builder.build();

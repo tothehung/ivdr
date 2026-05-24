@@ -92,7 +92,13 @@ public class TenantContextService {
         log.debug("Setting tenant context: organizationId={}", organizationId);
 
         // Write to the DB session — affects all subsequent queries on this connection.
-        jdbcTemplate.queryForObject(SET_TENANT_SQL, Void.class, organizationId.toString());
+        jdbcTemplate.execute((java.sql.Connection conn) -> {
+            try (java.sql.PreparedStatement ps = conn.prepareStatement(SET_TENANT_SQL)) {
+                ps.setObject(1, organizationId);
+                ps.execute();
+            }
+            return null;
+        });
 
         // Mirror at application level for lightweight reads.
         CURRENT_ORG_ID.set(organizationId);
@@ -109,7 +115,12 @@ public class TenantContextService {
         log.debug("Clearing tenant context (was: {})", CURRENT_ORG_ID.get());
 
         // Reset the DB session setting.
-        jdbcTemplate.queryForObject(CLEAR_TENANT_SQL, Void.class);
+        jdbcTemplate.execute((java.sql.Connection conn) -> {
+            try (java.sql.PreparedStatement ps = conn.prepareStatement(CLEAR_TENANT_SQL)) {
+                ps.execute();
+            }
+            return null;
+        });
 
         // Remove from thread-local to prevent memory leaks in thread pools.
         CURRENT_ORG_ID.remove();

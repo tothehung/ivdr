@@ -132,6 +132,7 @@ app:
   storage:
     s3:
       endpoint: ${AWS_S3_ENDPOINT:}        # empty = use real AWS
+      presigned-endpoint: ${AWS_S3_PRESIGNED_ENDPOINT:${AWS_S3_ENDPOINT:}}
       bucket: ${AWS_S3_BUCKET:ivdr-documents}
       region: ${AWS_REGION:ap-southeast-1}
       access-key: ${AWS_ACCESS_KEY_ID:}

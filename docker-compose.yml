@@ -139,6 +139,7 @@ services:
       REDIS_PASSWORD: ivdr_redis_secret
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       AWS_S3_ENDPOINT: http://minio:9000
+      AWS_S3_PRESIGNED_ENDPOINT: ${AWS_S3_PRESIGNED_ENDPOINT:-http://localhost:9000}
       AWS_S3_BUCKET: ivdr-documents
       AWS_ACCESS_KEY_ID: ivdr_minio_user
       AWS_SECRET_ACCESS_KEY: ivdr_minio_secret

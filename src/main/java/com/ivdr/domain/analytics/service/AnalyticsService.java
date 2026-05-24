@@ -72,18 +72,18 @@ public class AnalyticsService {
                 SELECT resource_id::text  AS document_id,
                        COUNT(*)           AS view_count
                   FROM audit_logs
-                 WHERE workspace_id  = :workspaceId
+                 WHERE metadata->>'workspaceId' = :workspaceIdStr
                    AND event_type    = 'DOCUMENT_VIEWED'
-                   AND occurred_at  >= :from
-                   AND occurred_at  <= :to::date + INTERVAL '1 day' - INTERVAL '1 second'
+                   AND created_at  >= :from
+                   AND created_at  <= :to::date + INTERVAL '1 day' - INTERVAL '1 second'
                  GROUP BY resource_id
                  ORDER BY view_count DESC
                 """;
 
         MapSqlParameterSource params = new MapSqlParameterSource()
-                .addValue("workspaceId", workspaceId)
-                .addValue("from",        from.atStartOfDay())
-                .addValue("to",          to);
+                .addValue("workspaceIdStr", workspaceId.toString())
+                .addValue("from",           from.atStartOfDay())
+                .addValue("to",             to);
 
         Map<String, Long> heatmap = new LinkedHashMap<>();
         jdbcTemplate.query(sql, params, rs -> {
@@ -111,13 +111,13 @@ public class AnalyticsService {
         log.info("Computing activity timeline for user {} from {} to {}", userId, from, to);
 
         String sql = """
-                SELECT DATE(occurred_at) AS activity_date,
+                SELECT DATE(created_at) AS activity_date,
                        COUNT(*)          AS event_count
                   FROM audit_logs
                  WHERE user_id     = :userId
-                   AND occurred_at >= :from
-                   AND occurred_at <= :to::date + INTERVAL '1 day' - INTERVAL '1 second'
-                 GROUP BY DATE(occurred_at)
+                   AND created_at >= :from
+                   AND created_at <= :to::date + INTERVAL '1 day' - INTERVAL '1 second'
+                 GROUP BY DATE(created_at)
                  ORDER BY activity_date ASC
                 """;
 
@@ -162,14 +162,14 @@ public class AnalyticsService {
                        COALESCE(SUM(file_size_bytes), 0) AS storage_bytes
                   FROM documents
                  WHERE workspace_id = :workspaceId
-                   AND deleted_at IS NULL
+                   AND status != 'DELETED'
                 """;
 
         // Total downloads from audit_logs
         String downloadSql = """
                 SELECT COUNT(*) AS total_downloads
                   FROM audit_logs
-                 WHERE workspace_id = :workspaceId
+                 WHERE metadata->>'workspaceId' = :workspaceIdStr
                    AND event_type   = 'DOCUMENT_DOWNLOADED'
                 """;
 
@@ -177,12 +177,13 @@ public class AnalyticsService {
         String activeUsersSql = """
                 SELECT COUNT(DISTINCT user_id) AS active_users
                   FROM audit_logs
-                 WHERE workspace_id = :workspaceId
-                   AND occurred_at >= NOW() - INTERVAL '30 days'
+                 WHERE (metadata->>'workspaceId' = :workspaceIdStr OR (resource_type = 'workspace' AND resource_id = :workspaceIdStr))
+                   AND created_at >= NOW() - INTERVAL '30 days'
                 """;
 
         MapSqlParameterSource params = new MapSqlParameterSource()
-                .addValue("workspaceId", workspaceId);
+                .addValue("workspaceId",    workspaceId)
+                .addValue("workspaceIdStr", workspaceId.toString());
 
         long totalDocs      = 0L;
         long storageBytes   = 0L;
@@ -223,7 +224,7 @@ public class AnalyticsService {
      * @param date  the calendar day
      * @param count number of audit events recorded on that day
      */
-    public record ActivityPoint(LocalDate date, long count) {}
+    public record ActivityPoint(LocalDate date, long count) implements java.io.Serializable {}
 
     /**
      * Aggregate statistics for a workspace.
@@ -238,7 +239,7 @@ public class AnalyticsService {
             long totalDownloads,
             long activeUsers,
             long storageBytes
-    ) {}
+    ) implements java.io.Serializable {}
 
     // =========================================================================
     // Private helpers

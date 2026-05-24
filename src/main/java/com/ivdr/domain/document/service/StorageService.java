@@ -104,11 +104,41 @@ public class StorageService {
                 .contentLength(size)
                 .build();
 
+        byte[] bytes;
         try {
-            s3Client.putObject(putRequest, RequestBody.fromInputStream(inputStream, size));
+            bytes = inputStream.readAllBytes();
+        } catch (IOException e) {
+            throw ApiException.internalError("Failed to read upload stream: " + e.getMessage());
+        }
+
+        try {
+            s3Client.putObject(putRequest, RequestBody.fromBytes(bytes));
             log.info("File uploaded successfully — key={}", fileKey);
             return fileKey;
+        } catch (software.amazon.awssdk.services.s3.model.NoSuchBucketException ex) {
+            log.info("Bucket '{}' does not exist during upload. Creating and retrying...", bucketName);
+            try {
+                s3Client.createBucket(software.amazon.awssdk.services.s3.model.CreateBucketRequest.builder().bucket(bucketName).build());
+                s3Client.putObject(putRequest, RequestBody.fromBytes(bytes));
+                log.info("File uploaded successfully after creating bucket — key={}", fileKey);
+                return fileKey;
+            } catch (Exception retryEx) {
+                log.error("Failed to upload after creating bucket: {}", retryEx.getMessage(), retryEx);
+                throw ApiException.internalError("Failed to upload file to storage: " + retryEx.getMessage());
+            }
         } catch (Exception ex) {
+            if (ex instanceof software.amazon.awssdk.services.s3.model.S3Exception s3Ex && s3Ex.statusCode() == 404) {
+                log.info("Bucket '{}' does not exist (404) during upload. Creating and retrying...", bucketName);
+                try {
+                    s3Client.createBucket(software.amazon.awssdk.services.s3.model.CreateBucketRequest.builder().bucket(bucketName).build());
+                    s3Client.putObject(putRequest, RequestBody.fromBytes(bytes));
+                    log.info("File uploaded successfully after creating bucket — key={}", fileKey);
+                    return fileKey;
+                } catch (Exception retryEx) {
+                    log.error("Failed to upload after creating bucket: {}", retryEx.getMessage(), retryEx);
+                    throw ApiException.internalError("Failed to upload file to storage: " + retryEx.getMessage());
+                }
+            }
             log.error("S3 upload failed — key={} error={}", fileKey, ex.getMessage(), ex);
             throw ApiException.internalError("Failed to upload file to storage: " + ex.getMessage());
         }
