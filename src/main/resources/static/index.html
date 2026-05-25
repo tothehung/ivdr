@@ -3,416 +3,723 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IVDR Document Management System</title>
+    <title>IVDR Compliance Portal — Document Management</title>
+    <meta name="description" content="Secure multi-tenant compliance document management with real-time collaboration, AI analysis, and audit trails.">
     <link rel="stylesheet" href="css/style.css">
-    <!-- ChartJS for Visual Analytics Dashboard -->
+    <!-- Monaco Editor (code editor) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+    <!-- Quill.js (rich text editor) -->
+    <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
+    <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
+    <!-- ChartJS -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- SockJS and STOMP for WebSockets presence and alerts -->
+    <!-- SockJS + STOMP -->
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.5.1/dist/sockjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+    <!-- Three.js for 3D particle background -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
-    <!-- Toast Alerts Container -->
-    <div id="toast-container"></div>
+<!-- ============================================================
+     3D PARTICLE CANVAS BACKGROUND
+     ============================================================ -->
+<canvas id="particle-canvas"></canvas>
 
-    <!-- Modals Layer -->
-    <!-- 1. Create Workspace Modal -->
-    <div id="modal-workspace" class="modal-overlay">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Create Deal Room Workspace</h3>
-                <button class="modal-close" onclick="closeModal('modal-workspace')">&times;</button>
-            </div>
-            <form id="form-create-workspace" onsubmit="handleCreateWorkspace(event)">
-                <div class="form-group">
-                    <label for="ws-name">Workspace Name</label>
-                    <input type="text" id="ws-name" class="form-input" required placeholder="e.g. IVDR audit room A">
-                </div>
-                <div class="form-group">
-                    <label for="ws-desc">Description</label>
-                    <input type="text" id="ws-desc" class="form-input" placeholder="Enter short workspace description...">
-                </div>
-                <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem;">
-                    <input type="checkbox" id="ws-private" style="width: auto; transform: scale(1.2);">
-                    <label for="ws-private" style="margin-bottom: 0; cursor: pointer;">Private Workspace</label>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn btn-outline" onclick="closeModal('modal-workspace')">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Create Workspace</button>
-                </div>
-            </form>
+<!-- ============================================================
+     TOAST CONTAINER
+     ============================================================ -->
+<div id="toast-container"></div>
+
+<!-- ============================================================
+     MODALS LAYER
+     ============================================================ -->
+
+<!-- 1. Create Workspace Modal -->
+<div id="modal-workspace" class="modal-overlay">
+    <div class="modal-content glass">
+        <div class="modal-header">
+            <h3>⊕ Create Deal Room Workspace</h3>
+            <button class="modal-close" onclick="closeModal('modal-workspace')">✕</button>
         </div>
-    </div>
-
-    <!-- 2. Upload Document Modal -->
-    <div id="modal-upload" class="modal-overlay">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Upload Compliance Document</h3>
-                <button class="modal-close" onclick="closeModal('modal-upload')">&times;</button>
+        <form id="form-create-workspace" onsubmit="handleCreateWorkspace(event)">
+            <div class="form-group">
+                <label for="ws-name">Workspace Name</label>
+                <input type="text" id="ws-name" class="form-input" required placeholder="e.g. IVDR Audit Room Alpha">
             </div>
-            <form id="form-upload-doc" onsubmit="handleUploadDocument(event)">
-                <div class="form-group">
-                    <label for="doc-file">Select File</label>
-                    <input type="file" id="doc-file" class="form-input" required>
-                </div>
-                <div class="form-group">
-                    <label for="doc-name">Document Name</label>
-                    <input type="text" id="doc-name" class="form-input" required placeholder="Compliance title...">
-                </div>
-                <div class="form-group">
-                    <label for="doc-desc">Description</label>
-                    <input type="text" id="doc-desc" class="form-input" placeholder="Enter brief document description...">
-                </div>
-                <div class="form-group">
-                    <label for="doc-tags">Tags (comma-separated)</label>
-                    <input type="text" id="doc-tags" class="form-input" placeholder="e.g. audit, ivdr, compliance">
-                </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn btn-outline" onclick="closeModal('modal-upload')">Cancel</button>
-                    <button type="submit" class="btn btn-success">Upload</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- 3. Add Member Modal -->
-    <div id="modal-member" class="modal-overlay">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Invite Member to Workspace</h3>
-                <button class="modal-close" onclick="closeModal('modal-member')">&times;</button>
+            <div class="form-group">
+                <label for="ws-desc">Description</label>
+                <input type="text" id="ws-desc" class="form-input" placeholder="Short description...">
             </div>
-            <form id="form-add-member" onsubmit="handleAddMember(event)">
-                <div class="form-group">
-                    <label for="member-user-id">User ID (UUID)</label>
-                    <input type="text" id="member-user-id" class="form-input" required placeholder="User UUID...">
-                </div>
-                <div class="form-group">
-                    <label for="member-role">Assign Role</label>
-                    <select id="member-role" class="form-input" style="background: #0f172b;">
-                        <option value="VIEWER">VIEWER (Read-only)</option>
-                        <option value="EDITOR">EDITOR (Read/Write)</option>
-                        <option value="OWNER">OWNER (Full Admin)</option>
-                    </select>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn btn-outline" onclick="closeModal('modal-member')">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Add Member</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- 4. Explanations AI Modal -->
-    <div id="modal-ai-explain" class="modal-overlay">
-        <div class="modal-content" style="max-width: 600px;">
-            <div class="modal-header">
-                <h3>AI Security Anomaly Explanation</h3>
-                <button class="modal-close" onclick="closeModal('modal-ai-explain')">&times;</button>
+            <div class="form-group form-check-group">
+                <input type="checkbox" id="ws-private">
+                <label for="ws-private">🔒 Private Workspace (invitation-only)</label>
             </div>
-            <div class="summary-container" style="background: rgba(15,23,42,0.6); max-height: 400px; overflow-y: auto;">
-                <p id="ai-explanation-text">Asking AI model to analyze the anomaly event logs... please wait...</p>
+            <div class="form-group">
+                <label for="ws-password">Access Password (optional watermark protection)</label>
+                <input type="password" id="ws-password" class="form-input" placeholder="Leave blank for no password">
             </div>
             <div class="modal-actions">
-                <button class="btn btn-primary" onclick="closeModal('modal-ai-explain')">Close</button>
+                <button type="button" class="btn btn-outline" onclick="closeModal('modal-workspace')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create Workspace</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 2. Upload Document Modal -->
+<div id="modal-upload" class="modal-overlay">
+    <div class="modal-content glass">
+        <div class="modal-header">
+            <h3>⬆ Upload Document</h3>
+            <button class="modal-close" onclick="closeModal('modal-upload')">✕</button>
+        </div>
+        <form id="form-upload-doc" onsubmit="handleUploadDocument(event)">
+            <!-- Drop zone -->
+            <div id="drop-zone" class="drop-zone" ondrop="handleDrop(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" onclick="document.getElementById('doc-file').click()">
+                <div class="drop-zone-content">
+                    <div class="drop-zone-icon">📁</div>
+                    <p>Drag &amp; drop files or folders here</p>
+                    <p class="drop-zone-sub">Supports PDF, DOCX, XLSX, Images, Code files, ZIPs and folders</p>
+                    <span class="btn btn-outline" style="width:auto;padding:.4rem 1rem;font-size:.8rem;pointer-events:none;">Browse Files</span>
+                </div>
+                <input type="file" id="doc-file" style="display:none" multiple accept="*/*">
+                <input type="file" id="doc-folder" style="display:none" webkitdirectory multiple>
+            </div>
+            <div id="file-preview-list" class="file-preview-list"></div>
+            <div class="form-group">
+                <label for="doc-name">Document Name</label>
+                <input type="text" id="doc-name" class="form-input" required placeholder="Compliance Document Title">
+            </div>
+            <div class="form-group">
+                <label for="doc-desc">Description</label>
+                <input type="text" id="doc-desc" class="form-input" placeholder="Brief description...">
+            </div>
+            <div class="form-group">
+                <label for="doc-tags">Tags (comma-separated)</label>
+                <input type="text" id="doc-tags" class="form-input" placeholder="e.g. audit, ivdr, compliance">
+            </div>
+            <div id="upload-progress-bar" class="progress-bar-container" style="display:none">
+                <div id="upload-progress-fill" class="progress-bar-fill"></div>
+                <span id="upload-progress-text" class="progress-text">0%</span>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-outline" onclick="closeModal('modal-upload')">Cancel</button>
+                <button type="button" class="btn btn-outline" onclick="document.getElementById('doc-folder').click()" style="width:auto">📂 Add Folder</button>
+                <button type="submit" class="btn btn-success">Upload</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 3. Add Member Modal -->
+<div id="modal-member" class="modal-overlay">
+    <div class="modal-content glass">
+        <div class="modal-header">
+            <h3>👤 Invite Member</h3>
+            <button class="modal-close" onclick="closeModal('modal-member')">✕</button>
+        </div>
+        <form id="form-add-member" onsubmit="handleAddMember(event)">
+            <div class="form-group">
+                <label for="member-user-id">User ID (UUID)</label>
+                <input type="text" id="member-user-id" class="form-input" required placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+                <span class="form-hint">Find your User ID in the sidebar profile section</span>
+            </div>
+            <div class="form-group">
+                <label>Assign Role</label>
+                <div class="role-selector">
+                    <input type="radio" name="member-role" id="role-viewer" value="VIEWER" checked>
+                    <label for="role-viewer" class="role-option role-viewer">
+                        <span class="role-icon">👁</span>
+                        <span class="role-name">VIEWER</span>
+                        <span class="role-desc">Read-only access. Cannot upload or delete.</span>
+                    </label>
+                    <input type="radio" name="member-role" id="role-editor" value="EDITOR">
+                    <label for="role-editor" class="role-option role-editor">
+                        <span class="role-icon">✏️</span>
+                        <span class="role-name">EDITOR</span>
+                        <span class="role-desc">Can upload and edit. Cannot delete or manage members.</span>
+                    </label>
+                    <input type="radio" name="member-role" id="role-owner" value="OWNER">
+                    <label for="role-owner" class="role-option role-owner">
+                        <span class="role-icon">👑</span>
+                        <span class="role-name">OWNER</span>
+                        <span class="role-desc">Full admin. Can delete, manage members, and set workspace settings.</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-outline" onclick="closeModal('modal-member')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Send Invitation</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 4. AI Explanation Modal -->
+<div id="modal-ai-explain" class="modal-overlay">
+    <div class="modal-content glass" style="max-width:680px">
+        <div class="modal-header">
+            <h3>🤖 AI Security Analysis</h3>
+            <button class="modal-close" onclick="closeModal('modal-ai-explain')">✕</button>
+        </div>
+        <div class="ai-response-box">
+            <p id="ai-explanation-text">Analyzing anomaly event logs...</p>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-primary" onclick="closeModal('modal-ai-explain')">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- 5. AI Chatbot Modal -->
+<div id="modal-ai-chat" class="modal-overlay">
+    <div class="modal-content glass" style="max-width:700px; height:85vh; display:flex; flex-direction:column;">
+        <div class="modal-header">
+            <h3>🤖 AI Compliance Assistant</h3>
+            <button class="modal-close" onclick="closeModal('modal-ai-chat')">✕</button>
+        </div>
+        <div id="chat-messages" class="chat-messages"></div>
+        <div class="chat-input-area">
+            <textarea id="chat-input" class="form-input" placeholder="Ask about compliance, documents, anomalies..." rows="2" onkeydown="handleChatKeydown(event)"></textarea>
+            <button class="btn btn-primary" onclick="sendChatMessage()" style="width:auto;padding:.8rem 1.5rem">Send</button>
+        </div>
+    </div>
+</div>
+
+<!-- 6. File Editor Modal -->
+<div id="modal-file-editor" class="modal-overlay">
+    <div class="modal-content glass editor-modal">
+        <div class="modal-header">
+            <h3>✏️ Edit Document: <span id="editor-doc-name">Untitled</span></h3>
+            <button class="modal-close" onclick="closeModal('modal-file-editor')">✕</button>
+        </div>
+        <div class="editor-tabs">
+            <button class="editor-tab active" onclick="switchEditorTab('code')">🖥 Code Editor</button>
+            <button class="editor-tab" onclick="switchEditorTab('rich')">📝 Rich Text</button>
+            <button class="editor-tab" onclick="switchEditorTab('raw')">📄 Raw Text</button>
+        </div>
+        <div id="editor-code" class="editor-pane" style="flex:1">
+            <div id="monaco-editor-container" style="width:100%;height:100%;min-height:400px"></div>
+        </div>
+        <div id="editor-rich" class="editor-pane" style="display:none;flex:1">
+            <div id="quill-editor" style="height:400px"></div>
+        </div>
+        <div id="editor-raw" class="editor-pane" style="display:none;flex:1">
+            <textarea id="raw-editor" class="form-input" style="height:400px;font-family:'Fira Code',monospace;font-size:.85rem;resize:vertical"></textarea>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="closeModal('modal-file-editor')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveEditorContent()">💾 Save Changes</button>
+        </div>
+    </div>
+</div>
+
+<!-- 7. Watermark Password Modal -->
+<div id="modal-watermark-pw" class="modal-overlay">
+    <div class="modal-content glass" style="max-width:440px">
+        <div class="modal-header">
+            <h3>🔐 Protected Workspace</h3>
+            <button class="modal-close" onclick="closeModal('modal-watermark-pw'); document.getElementById('watermark-overlay').style.display = 'none'; navigateTab('tab-workspaces');">✕</button>
+        </div>
+        <div style="text-align:center;padding:1rem 0 1.5rem">
+            <div style="font-size:3rem;margin-bottom:1rem">🛡️</div>
+            <p style="color:var(--text-secondary);margin-bottom:1.5rem">This workspace is password-protected. Enter the access password to view documents.</p>
+        </div>
+        <div class="form-group">
+            <label for="watermark-pw-input">Access Password</label>
+            <input type="password" id="watermark-pw-input" class="form-input" placeholder="Enter workspace password" onkeydown="if(event.key==='Enter')verifyWatermarkPassword()">
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="closeModal('modal-watermark-pw'); document.getElementById('watermark-overlay').style.display = 'none'; navigateTab('tab-workspaces');">Cancel</button>
+            <button class="btn btn-primary" onclick="verifyWatermarkPassword()">Unlock 🔓</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================
+     SCREENS
+     ============================================================ -->
+
+<!-- Screen A: Register (Multi-Step) -->
+<div id="screen-register" class="auth-container view-section active">
+    <div class="auth-3d-panel">
+        <div class="auth-3d-content">
+            <div class="auth-logo-3d">
+                <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            </div>
+            <h2 class="auth-3d-title">IVDR Portal</h2>
+            <p class="auth-3d-sub">Secure Compliance Document Management</p>
+            <div class="auth-feature-list">
+                <div class="auth-feature">✓ Multi-tenant isolation</div>
+                <div class="auth-feature">✓ AI-powered compliance analysis</div>
+                <div class="auth-feature">✓ Real-time collaboration</div>
+                <div class="auth-feature">✓ Cryptographic audit trail</div>
+                <div class="auth-feature">✓ Role-based access control</div>
             </div>
         </div>
     </div>
-
-    <!-- ==========================================
-         SCREENS (Visible dynamically)
-         ========================================== -->
-
-    <!-- Screen A: Auth Register -->
-    <div id="screen-register" class="auth-container view-section active">
-        <div class="auth-card">
-            <div class="auth-header">
-                <h1>IVDR Compliance</h1>
-                <p>Register a new tenant organization</p>
+    <div class="auth-form-panel">
+        <div class="auth-card glass card-3d">
+            <!-- Step indicators -->
+            <div class="step-indicators">
+                <div class="step-dot active" id="step-dot-1">1</div>
+                <div class="step-line"></div>
+                <div class="step-dot" id="step-dot-2">2</div>
+                <div class="step-line"></div>
+                <div class="step-dot" id="step-dot-3">3</div>
             </div>
-            <form onsubmit="handleRegister(event)">
-                <div class="form-group">
-                    <label for="reg-org">Organization Name</label>
-                    <input type="text" id="reg-org" class="form-input" required placeholder="e.g. BioTech MedLab">
+
+            <!-- Step 1: Info collection -->
+            <div id="register-step-1">
+                <div class="auth-header">
+                    <h1>Create Account</h1>
+                    <p>Set up your organization workspace</p>
                 </div>
-                <div class="form-group">
-                    <label for="reg-name">Full Name (Admin)</label>
-                    <input type="text" id="reg-name" class="form-input" required placeholder="John Doe">
+                <form onsubmit="handleRegisterStep1(event)">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="reg-org">Organization Name *</label>
+                            <input type="text" id="reg-org" class="form-input" required placeholder="e.g. BioTech MedLab">
+                        </div>
+                        <div class="form-group">
+                            <label for="reg-name">Full Name *</label>
+                            <input type="text" id="reg-name" class="form-input" required placeholder="John Doe">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-email">Email Address *</label>
+                        <input type="email" id="reg-email" class="form-input" required placeholder="john@example.com">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="reg-phone">Phone Number</label>
+                            <input type="tel" id="reg-phone" class="form-input" placeholder="+84 xxx xxx xxxx">
+                        </div>
+                        <div class="form-group">
+                            <label for="reg-job">Job Title</label>
+                            <input type="text" id="reg-job" class="form-input" placeholder="e.g. Compliance Officer">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-pass">Password (min 8 chars) *</label>
+                        <div class="password-wrapper">
+                            <input type="password" id="reg-pass" class="form-input" required placeholder="••••••••" oninput="checkPasswordStrength(this.value)">
+                            <button type="button" class="toggle-pw" onclick="togglePassword('reg-pass')">👁</button>
+                        </div>
+                        <div class="password-strength-bar">
+                            <div id="pw-strength-fill" class="strength-fill"></div>
+                        </div>
+                        <span id="pw-strength-label" class="form-hint"></span>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-pass2">Confirm Password *</label>
+                        <input type="password" id="reg-pass2" class="form-input" required placeholder="••••••••">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Next: Verify Email →</button>
+                </form>
+                <div class="auth-footer">
+                    <p>Already have an account? <a href="#" onclick="showScreen('screen-login')">Sign In</a></p>
                 </div>
-                <div class="form-group">
-                    <label for="reg-email">Email Address</label>
-                    <input type="email" id="reg-email" class="form-input" required placeholder="john@example.com">
+            </div>
+
+            <!-- Step 2: OTP verification -->
+            <div id="register-step-2" style="display:none">
+                <div class="auth-header">
+                    <h1>Verify Your Email</h1>
+                    <p id="otp-sent-msg">We sent a 6-digit code to your email</p>
                 </div>
-                <div class="form-group">
-                    <label for="reg-pass">Password (Min 8 chars)</label>
-                    <input type="password" id="reg-pass" class="form-input" required placeholder="••••••••">
+                <div class="otp-container">
+                    <input type="text" class="otp-input" maxlength="1" oninput="otpNext(this,0)" onkeydown="otpBack(event,0)" id="otp-0">
+                    <input type="text" class="otp-input" maxlength="1" oninput="otpNext(this,1)" onkeydown="otpBack(event,1)" id="otp-1">
+                    <input type="text" class="otp-input" maxlength="1" oninput="otpNext(this,2)" onkeydown="otpBack(event,2)" id="otp-2">
+                    <input type="text" class="otp-input" maxlength="1" oninput="otpNext(this,3)" onkeydown="otpBack(event,3)" id="otp-3">
+                    <input type="text" class="otp-input" maxlength="1" oninput="otpNext(this,4)" onkeydown="otpBack(event,4)" id="otp-4">
+                    <input type="text" class="otp-input" maxlength="1" oninput="otpNext(this,5)" onkeydown="otpBack(event,5)" id="otp-5">
                 </div>
-                <button type="submit" class="btn btn-primary">Create Account</button>
-            </form>
-            <div class="auth-footer">
-                <p>Already registered? <a href="#" onclick="showScreen('screen-login')">Sign In</a></p>
+                <button class="btn btn-primary" onclick="handleVerifyOtp()">Verify Code</button>
+                <div style="text-align:center;margin-top:1rem">
+                    <a href="#" onclick="resendOtp()" style="color:var(--text-secondary);font-size:.85rem">Didn't receive it? Resend OTP</a>
+                </div>
+                <div style="text-align:center;margin-top:.5rem">
+                    <a href="#" onclick="showRegisterStep(1)" style="color:var(--text-secondary);font-size:.85rem">← Back</a>
+                </div>
+            </div>
+
+            <!-- Step 3: Complete -->
+            <div id="register-step-3" style="display:none">
+                <div class="auth-header">
+                    <h1>🎉 You're all set!</h1>
+                    <p>Creating your organization workspace...</p>
+                </div>
+                <div class="success-animation">
+                    <div class="success-circle">✓</div>
+                </div>
+                <button class="btn btn-primary" onclick="completeRegistration()">Enter IVDR Portal →</button>
             </div>
         </div>
     </div>
+</div>
 
-    <!-- Screen B: Auth Login -->
-    <div id="screen-login" class="auth-container view-section">
-        <div class="auth-card">
-            <div class="auth-header">
-                <h1>Welcome Back</h1>
-                <p>Sign in to your compliance workspace</p>
+<!-- Screen B: Login -->
+<div id="screen-login" class="auth-container view-section">
+    <div class="auth-3d-panel">
+        <div class="auth-3d-content">
+            <div class="auth-logo-3d">
+                <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             </div>
-            <form onsubmit="handleLogin(event)">
+            <h2 class="auth-3d-title">Welcome Back</h2>
+            <p class="auth-3d-sub">Sign in to your compliance workspace</p>
+            <div class="auth-feature-list">
+                <div class="auth-feature">🔐 JWT secured sessions</div>
+                <div class="auth-feature">🏢 Multi-organization support</div>
+                <div class="auth-feature">🔄 Auto token rotation</div>
+                <div class="auth-feature">🚫 Brute-force protection</div>
+            </div>
+        </div>
+    </div>
+    <div class="auth-form-panel">
+        <div class="auth-card glass card-3d">
+            <div class="auth-header">
+                <h1>Sign In</h1>
+                <p>Access your compliance portal</p>
+            </div>
+            <form onsubmit="handleLogin(event)" id="login-form">
                 <div class="form-group">
                     <label for="login-email">Email Address</label>
-                    <input type="email" id="login-email" class="form-input" required placeholder="john@example.com">
+                    <input type="email" id="login-email" class="form-input" required placeholder="john@example.com" onblur="lookupOrgs(this.value)">
+                </div>
+                <!-- Org selector (shown when multiple orgs found) -->
+                <div id="org-selector-group" class="form-group" style="display:none">
+                    <label for="org-selector">Select Organization</label>
+                    <select id="org-selector" class="form-input org-select">
+                        <!-- Dynamically populated -->
+                    </select>
                 </div>
                 <div class="form-group">
                     <label for="login-pass">Password</label>
-                    <input type="password" id="login-pass" class="form-input" required placeholder="••••••••">
+                    <div class="password-wrapper">
+                        <input type="password" id="login-pass" class="form-input" required placeholder="••••••••">
+                        <button type="button" class="toggle-pw" onclick="togglePassword('login-pass')">👁</button>
+                    </div>
                 </div>
-                <button type="submit" class="btn btn-primary">Authenticate</button>
+                <button type="submit" class="btn btn-primary">Authenticate →</button>
             </form>
             <div class="auth-footer">
-                <p>Need a tenant organization? <a href="#" onclick="showScreen('screen-register')">Register Now</a></p>
+                <p>Need an account? <a href="#" onclick="showScreen('screen-register')">Register Organization</a></p>
             </div>
         </div>
     </div>
+</div>
 
-    <!-- Screen C: Main Application Area -->
-    <div id="screen-app" class="app-layout view-section">
-        <!-- Sidebar Navigation -->
-        <aside class="sidebar">
-            <div>
-                <div class="logo-section">
-                    <h2>
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                        IVDR Portal
-                    </h2>
+<!-- Screen C: Main Application -->
+<div id="screen-app" class="app-layout view-section">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div>
+            <div class="logo-section">
+                <div class="logo-icon">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                 </div>
-                <ul class="nav-menu">
-                    <li class="nav-item active" onclick="navigateTab('tab-workspaces')">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-                        Workspaces
-                    </li>
-                    <li id="nav-analytics" class="nav-item" onclick="navigateTab('tab-analytics')">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-                        Analytics
-                    </li>
-                    <li id="nav-logs" class="nav-item" onclick="navigateTab('tab-logs')">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
-                        Audit Logs
-                    </li>
-                </ul>
-            </div>
-            <div class="user-profile">
-                <div class="user-info">
-                    <div id="user-avatar" class="avatar">U</div>
-                    <div class="user-detail">
-                        <h4 id="user-display-name">Loading...</h4>
-                        <p id="user-display-role">Loading...</p>
-                        <p id="user-display-id" style="font-size: 0.65rem; color: var(--text-secondary); cursor: pointer; text-decoration: underline; margin-top: 0.2rem;" onclick="navigator.clipboard.writeText(this.title); showToast('Copied', 'Your User ID has been copied to clipboard.', 'success');" title="">ID: Loading...</p>
-                    </div>
+                <div>
+                    <h2 class="logo-text">IVDR</h2>
+                    <span class="logo-sub">Compliance Portal</span>
                 </div>
-                <button class="btn btn-outline" style="padding: 0.6rem;" onclick="handleLogout()">Sign Out</button>
             </div>
-        </aside>
 
-        <!-- Main Content Area -->
-        <main class="main-content">
-            <div class="blob blob-1"></div>
-            <div class="blob blob-2"></div>
+            <ul class="nav-menu">
+                <li class="nav-item active" onclick="navigateTab('tab-workspaces')" id="nav-workspaces">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                    Workspaces
+                    <span id="ws-badge" class="nav-badge" style="display:none">0</span>
+                </li>
+                <li id="nav-analytics" class="nav-item" onclick="navigateTab('tab-analytics')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                    Analytics
+                </li>
+                <li id="nav-logs" class="nav-item" onclick="navigateTab('tab-logs')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+                    Audit Logs
+                </li>
+                <li class="nav-item" onclick="openModal('modal-ai-chat')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    AI Assistant
+                    <span class="nav-badge ai-badge">AI</span>
+                </li>
+            </ul>
+        </div>
 
-            <!-- Tab 1: Workspaces List -->
-            <div id="tab-workspaces" class="view-section active">
-                <div class="header-bar">
-                    <div>
-                        <h1>Deal Room Workspaces</h1>
-                        <p style="color: var(--text-secondary); margin-top: 0.2rem;">Select or create a workspace to manage compliance documentation</p>
-                    </div>
-                    <button class="btn btn-primary" style="width: auto; padding: 0.8rem 1.5rem;" onclick="openModal('modal-workspace')">
-                        + New Workspace
+        <div class="user-profile">
+            <div class="user-info">
+                <div id="user-avatar" class="avatar">U</div>
+                <div class="user-detail">
+                    <h4 id="user-display-name">Loading...</h4>
+                    <p id="user-display-role" class="user-role-badge">Loading...</p>
+                    <p id="user-display-id" class="user-id-text" onclick="copyUserId()" title="">Click to copy UUID</p>
+                </div>
+            </div>
+            <button class="btn btn-outline btn-signout" onclick="handleLogout()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                Sign Out
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Floating background blobs -->
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+
+        <!-- ============================================================
+             Tab 1: Workspaces List
+             ============================================================ -->
+        <div id="tab-workspaces" class="view-section active">
+            <div class="header-bar">
+                <div>
+                    <h1>Deal Room Workspaces</h1>
+                    <p class="header-sub">Manage secure compliance workspaces</p>
+                </div>
+                <button class="btn btn-primary" style="width:auto;padding:.8rem 1.5rem" onclick="openModal('modal-workspace')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    New Workspace
+                </button>
+            </div>
+            <div id="workspace-list-cards" class="workspace-grid">
+                <!-- Dynamic cards -->
+            </div>
+        </div>
+
+        <!-- ============================================================
+             Tab 1B: Workspace Detail
+             ============================================================ -->
+        <div id="tab-workspace-detail" class="view-section">
+            <!-- Watermark overlay -->
+            <div id="watermark-overlay" class="watermark-overlay" style="display:none">
+                <canvas id="watermark-canvas"></canvas>
+            </div>
+
+            <div class="header-bar" style="margin-bottom:1.5rem">
+                <div>
+                    <button class="btn btn-outline btn-back" onclick="navigateTab('tab-workspaces')">← Back</button>
+                    <h1 id="active-ws-name" style="margin-top:.5rem">Workspace Detail</h1>
+                    <p id="active-ws-desc" class="header-sub">Description loading...</p>
+                    <div id="ws-member-role-badge" class="member-role-display"></div>
+                </div>
+                <div style="display:flex;gap:.75rem;flex-wrap:wrap">
+                    <button id="btn-invite-member" class="btn btn-outline" style="width:auto;padding:.7rem 1.2rem" onclick="openModal('modal-member')">
+                        👤 Invite
+                    </button>
+                    <button id="btn-upload-trigger" class="btn btn-success" style="width:auto;padding:.7rem 1.2rem" onclick="openModal('modal-upload')">
+                        ⬆ Upload
+                    </button>
+                    <button class="btn btn-outline" style="width:auto;padding:.7rem 1.2rem" onclick="openModal('modal-ai-chat')">
+                        🤖 AI Chat
                     </button>
                 </div>
-                <div id="workspace-list-cards" class="dashboard-grid">
-                    <!-- Dynamic cards loaded via JS -->
-                </div>
             </div>
 
-            <!-- Tab 1B: Workspace Detail (Triggered when entering a workspace) -->
-            <div id="tab-workspace-detail" class="view-section">
-                <div class="header-bar" style="margin-bottom: 1.5rem;">
-                    <div>
-                        <button class="btn btn-outline" style="width: auto; padding: 0.4rem 1rem; font-size: 0.8rem; margin-bottom: 0.8rem; display: flex; align-items: center; gap: 0.4rem;" onclick="navigateTab('tab-workspaces')">
-                            &larr; Back
-                        </button>
-                        <h1 id="active-ws-name">Workspace Detail</h1>
-                        <p id="active-ws-desc" style="color: var(--text-secondary); margin-top: 0.2rem;">Description loading...</p>
+            <div class="workspace-layout">
+                <!-- Left panel: Documents -->
+                <div class="doc-panel">
+                    <div class="doc-panel-header">
+                        <h3>Documents</h3>
+                        <div class="doc-search-bar">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <input type="text" id="doc-search" class="doc-search-input" placeholder="Search documents..." oninput="filterDocuments(this.value)">
+                        </div>
                     </div>
-                    <div style="display: flex; gap: 1rem;">
-                        <button class="btn btn-outline" style="width: auto; padding: 0.8rem 1.5rem;" onclick="openModal('modal-member')">
-                            + Invite Member
-                        </button>
-                        <button id="btn-upload-trigger" class="btn btn-success" style="width: auto; padding: 0.8rem 1.5rem;" onclick="openModal('modal-upload')">
-                            Upload Document
-                        </button>
+                    <div class="table-container">
+                        <table id="document-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Size</th>
+                                    <th>Uploaded</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="document-list-body">
+                            </tbody>
+                        </table>
                     </div>
-                </div>
 
-                <div class="workspace-layout">
-                    <!-- Left panel: Documents list -->
-                    <div>
-                        <h3 style="margin-bottom: 1rem;">Documents</h3>
-                        <div class="table-container">
-                            <table id="document-table">
-                                <thead>
-                                    <tr>
-                                        <th>Name</th>
-                                        <th>Size</th>
-                                        <th>Status</th>
-                                        <th>Uploaded By</th>
-                                        <th>Created At</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="document-list-body">
-                                    <!-- Dynamic rows loaded via JS -->
-                                </tbody>
-                            </table>
+                    <!-- Selected Document Panel -->
+                    <div id="selected-doc-panel" style="display:none;margin-top:1.5rem" class="glass card-3d">
+                        <div class="doc-detail-header">
+                            <h3 id="selected-doc-name">Document Details</h3>
+                            <div id="selected-doc-tags" class="tag-container"></div>
+                        </div>
+                        <p id="selected-doc-desc" class="doc-desc-text">Loading...</p>
+
+                        <div class="section-label">📄 File Preview</div>
+                        <div id="doc-preview-box" class="preview-box">
+                            <span class="preview-placeholder">Select a file to preview</span>
                         </div>
 
-                        <!-- Selected Document Details (AI summary trigger) -->
-                        <div id="selected-doc-panel" style="display: none; margin-top: 2rem;" class="card-premium">
-                            <h3 id="selected-doc-name" style="margin-bottom: 0.5rem;">Document Details</h3>
-                            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;" id="selected-doc-tags">
-                                <!-- Tags dynamically loaded -->
-                            </div>
-                            <p id="selected-doc-desc" style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem;">Description loading...</p>
-                            
-                            <h4 style="margin-bottom: 0.5rem; font-size: 0.9rem; margin-top: 1.5rem;">File Preview</h4>
-                            <div id="doc-preview-box" class="summary-container" style="max-height: 320px; overflow: auto; display: flex; justify-content: center; align-items: center; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
-                                <span style="color: var(--text-secondary); font-size: 0.85rem;">Select file to preview.</span>
-                            </div>
-                            
-                            <h4 style="margin-bottom: 0.5rem; font-size: 0.9rem;">AI Compliance Summary</h4>
-                            <div id="ai-summary-box" class="summary-container">
-                                No summary generated yet. Click the button below to generate one.
-                            </div>
-                            <button id="btn-generate-summary" class="btn btn-primary" style="width: auto; padding: 0.6rem 1.2rem; font-size: 0.85rem; margin-top: 1rem;" onclick="triggerAiSummary()">
-                                Generate AI Summary
+                        <div class="section-label" style="margin-top:1.5rem">🤖 AI Compliance Summary</div>
+                        <div id="ai-summary-box" class="ai-summary-box">
+                            No AI summary yet. Click below to generate one.
+                        </div>
+                        <div style="display:flex;gap:.75rem;flex-wrap:wrap;margin-top:1rem">
+                            <button id="btn-generate-summary" class="btn btn-primary" style="width:auto;padding:.6rem 1.2rem;font-size:.85rem" onclick="triggerAiSummary()">
+                                🤖 Generate AI Summary
+                            </button>
+                            <button id="btn-edit-doc" class="btn btn-outline" style="width:auto;padding:.6rem 1.2rem;font-size:.85rem" onclick="openFileEditor()">
+                                ✏️ Edit File
                             </button>
                         </div>
                     </div>
+                </div>
 
-                    <!-- Right panel: Presence list -->
-                    <div>
-                        <div class="presence-panel">
-                            <h3>
-                                <span class="status-dot"></span>
-                                Connected Users
-                            </h3>
-                            <ul id="presence-user-list" class="presence-list">
-                                <!-- Active users loaded via WebSockets -->
-                            </ul>
+                <!-- Right panel: Presence + Chat -->
+                <div class="right-panel">
+                    <!-- Presence -->
+                    <div class="presence-panel glass">
+                        <h3>
+                            <span class="status-dot-animated"></span>
+                            Live Collaborators
+                        </h3>
+                        <ul id="presence-user-list" class="presence-list"></ul>
+                    </div>
+
+                    <!-- Members List -->
+                    <div class="members-panel glass" style="margin-top:1rem">
+                        <h3>👥 Workspace Members</h3>
+                        <ul id="workspace-members-list" class="members-list"></ul>
+                    </div>
+
+                    <!-- Workspace Chat -->
+                    <div class="workspace-chat-panel glass" style="margin-top:1rem">
+                        <div class="chat-panel-header">
+                            <h3>💬 Team Chat</h3>
+                            <button class="btn btn-outline" style="width:auto;padding:.3rem .8rem;font-size:.75rem" onclick="toggleChatExpand()">Expand</button>
+                        </div>
+                        <div id="workspace-chat-messages" class="workspace-chat-messages"></div>
+                        <div class="workspace-chat-input">
+                            <input type="text" id="workspace-chat-input" class="form-input" placeholder="Message the team..." onkeydown="if(event.key==='Enter')sendWorkspaceChat()">
+                            <button class="btn btn-primary" onclick="sendWorkspaceChat()" style="width:auto;padding:.6rem">→</button>
                         </div>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <!-- Tab 2: Analytics -->
-            <div id="tab-analytics" class="view-section">
-                <div class="header-bar">
-                    <div>
-                        <h1>Visual Analytics Dashboard</h1>
-                        <p style="color: var(--text-secondary); margin-top: 0.2rem;">Overview of multi-tenant security telemetry and logs</p>
+        <!-- ============================================================
+             Tab 2: Analytics
+             ============================================================ -->
+        <div id="tab-analytics" class="view-section">
+            <div class="header-bar">
+                <div>
+                    <h1>Analytics Dashboard</h1>
+                    <p class="header-sub">Real-time security telemetry and usage insights</p>
+                </div>
+                <button class="btn btn-outline" style="width:auto;padding:.8rem 1.2rem;font-size:.85rem" onclick="loadAnalytics()">
+                    🔄 Refresh
+                </button>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card glass card-3d">
+                    <div class="stat-icon" style="background:rgba(16,185,129,.15);color:#10b981">📄</div>
+                    <div class="stat-body">
+                        <div class="stat-value" id="stats-total-docs">-</div>
+                        <div class="stat-label">Total Documents</div>
+                        <div class="stat-sub">Active in workspace</div>
                     </div>
                 </div>
-
-                <div class="dashboard-grid">
-                    <div class="card-premium">
-                        <div class="card-title">Total Active Documents</div>
-                        <div id="stats-total-docs" class="card-value">-</div>
-                        <div class="card-desc">Active document count in workspace</div>
-                    </div>
-                    <div class="card-premium">
-                        <div class="card-title">Total Downloads</div>
-                        <div id="stats-total-downloads" class="card-value">-</div>
-                        <div class="card-desc">Downloads counted across workspace logs</div>
-                    </div>
-                    <div class="card-premium">
-                        <div class="card-title">Active Collaborators</div>
-                        <div id="stats-active-users" class="card-value">-</div>
-                        <div class="card-desc">Connected collaborators currently active</div>
+                <div class="stat-card glass card-3d">
+                    <div class="stat-icon" style="background:rgba(59,130,246,.15);color:#3b82f6">⬇️</div>
+                    <div class="stat-body">
+                        <div class="stat-value" id="stats-total-downloads">-</div>
+                        <div class="stat-label">Total Downloads</div>
+                        <div class="stat-sub">Audit-logged downloads</div>
                     </div>
                 </div>
-
-                <div class="analytics-grid">
-                    <!-- Timeline chart -->
-                    <div class="chart-container">
-                        <h4 style="margin-bottom: 1rem;">Daily Activity Timeline</h4>
-                        <div style="flex-grow: 1; position: relative;">
-                            <canvas id="chart-timeline"></canvas>
-                        </div>
+                <div class="stat-card glass card-3d">
+                    <div class="stat-icon" style="background:rgba(139,92,246,.15);color:#8b5cf6">👥</div>
+                    <div class="stat-body">
+                        <div class="stat-value" id="stats-active-users">-</div>
+                        <div class="stat-label">Active Users</div>
+                        <div class="stat-sub">Last 30 days</div>
                     </div>
-                    <!-- Heatmap placeholder or statistics -->
-                    <div class="chart-container">
-                        <h4 style="margin-bottom: 1rem;">Document Download Heatmap</h4>
-                        <div style="flex-grow: 1; position: relative;">
-                            <canvas id="chart-heatmap"></canvas>
-                        </div>
+                </div>
+                <div class="stat-card glass card-3d">
+                    <div class="stat-icon" style="background:rgba(236,72,153,.15);color:#ec4899">💾</div>
+                    <div class="stat-body">
+                        <div class="stat-value" id="stats-storage">-</div>
+                        <div class="stat-label">Storage Used</div>
+                        <div class="stat-sub">Total file storage</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Tab 3: Audit Logs -->
-            <div id="tab-logs" class="view-section">
-                <div class="header-bar">
-                    <div>
-                        <h1>Audit Trail Explorer</h1>
-                        <p style="color: var(--text-secondary); margin-top: 0.2rem;">Immutable, cryptographically signed security audit logs</p>
-                    </div>
-                    <div style="display: flex; gap: 1rem;">
-                        <button class="btn btn-outline" style="width: auto; padding: 0.8rem 1.2rem; font-size: 0.85rem;" onclick="loadAuditLogs(true)">
-                            Show Anomalies Only
-                        </button>
-                        <button class="btn btn-primary" style="width: auto; padding: 0.8rem 1.2rem; font-size: 0.85rem;" onclick="loadAuditLogs(false)">
-                            Refresh Logs
-                        </button>
+            <div class="analytics-grid">
+                <div class="chart-container glass">
+                    <h4>Daily Activity Timeline</h4>
+                    <div style="flex-grow:1;position:relative;min-height:200px">
+                        <canvas id="chart-timeline"></canvas>
                     </div>
                 </div>
-
-                <div class="table-container">
-                    <table id="logs-table">
-                        <thead>
-                            <tr>
-                                <th>Event Type</th>
-                                <th>Actor ID</th>
-                                <th>Resource Type</th>
-                                <th>Resource ID</th>
-                                <th>Security Check</th>
-                                <th>Timestamp</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="logs-list-body">
-                            <!-- Dynamic rows loaded via JS -->
-                        </tbody>
-                    </table>
+                <div class="chart-container glass">
+                    <h4>Document Download Heatmap</h4>
+                    <div style="flex-grow:1;position:relative;min-height:200px">
+                        <canvas id="chart-heatmap"></canvas>
+                    </div>
                 </div>
+            </div>
+        </div>
 
-                <!-- Pagination -->
-                <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
-                    <button id="btn-logs-prev" class="btn btn-outline" style="width: auto; padding: 0.5rem 1.2rem;" onclick="paginateLogs(-1)">Prev</button>
-                    <button id="btn-logs-next" class="btn btn-outline" style="width: auto; padding: 0.5rem 1.2rem;" onclick="paginateLogs(1)">Next</button>
+        <!-- ============================================================
+             Tab 3: Audit Logs
+             ============================================================ -->
+        <div id="tab-logs" class="view-section">
+            <div class="header-bar">
+                <div>
+                    <h1>Audit Trail Explorer</h1>
+                    <p class="header-sub">Immutable cryptographically-signed security logs</p>
+                </div>
+                <div style="display:flex;gap:.75rem">
+                    <button class="btn btn-outline" style="width:auto;padding:.7rem 1.2rem;font-size:.85rem" onclick="loadAuditLogs(true)">
+                        🔴 Anomalies Only
+                    </button>
+                    <button class="btn btn-primary" style="width:auto;padding:.7rem 1.2rem;font-size:.85rem" onclick="loadAuditLogs(false)">
+                        🔄 Refresh
+                    </button>
                 </div>
             </div>
 
-        </main>
-    </div>
+            <div class="table-container">
+                <table id="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Event Type</th>
+                            <th>Actor</th>
+                            <th>Resource</th>
+                            <th>Resource ID</th>
+                            <th>Status</th>
+                            <th>Timestamp</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logs-list-body"></tbody>
+                </table>
+            </div>
 
-    <!-- UI Core Logic Javascript -->
-    <script src="js/app.js"></script>
+            <div style="display:flex;justify-content:flex-end;gap:1rem;margin-top:1.5rem">
+                <button id="btn-logs-prev" class="btn btn-outline" style="width:auto;padding:.5rem 1.2rem" onclick="paginateLogs(-1)">← Prev</button>
+                <span id="logs-page-info" style="align-self:center;color:var(--text-secondary);font-size:.85rem"></span>
+                <button id="btn-logs-next" class="btn btn-outline" style="width:auto;padding:.5rem 1.2rem" onclick="paginateLogs(1)">Next →</button>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<!-- Script -->
+<script src="js/app.js"></script>
 </body>
 </html>

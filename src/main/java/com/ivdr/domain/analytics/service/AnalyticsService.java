@@ -2,7 +2,9 @@ package com.ivdr.domain.analytics.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
+
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -254,5 +256,16 @@ public class AnalyticsService {
         } catch (NumberFormatException ex) {
             return 0L;
         }
+    }
+
+    /**
+     * Evicts the cached workspace stats for the given workspace.
+     * Called after download events so analytics update in real time.
+     *
+     * @param workspaceId the workspace whose stats cache should be evicted
+     */
+    @CacheEvict(value = "analytics", key = "'workspace-stats:' + #workspaceId")
+    public void evictWorkspaceStats(UUID workspaceId) {
+        log.debug("Analytics cache evicted for workspace: {}", workspaceId);
     }
 }

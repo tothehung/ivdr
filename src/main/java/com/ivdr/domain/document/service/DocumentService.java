@@ -8,6 +8,9 @@ import com.ivdr.domain.document.dto.DocumentDtos.UploadRequest;
 import com.ivdr.domain.document.entity.Document;
 import com.ivdr.domain.document.repository.DocumentRepository;
 import com.ivdr.domain.ai.service.AiService;
+import com.ivdr.domain.analytics.service.AnalyticsService;
+import com.ivdr.domain.workspace.entity.WorkspaceMember;
+import com.ivdr.domain.workspace.repository.WorkspaceMemberRepository;
 import com.ivdr.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -78,6 +81,8 @@ public class DocumentService {
     private final AiService             aiService;
     private final ApplicationEventPublisher eventPublisher;
     private final SimpMessagingTemplate messagingTemplate;
+    private final WorkspaceMemberRepository workspaceMemberRepository;
+    private final AnalyticsService      analyticsService;
 
     // -------------------------------------------------------------------------
     // Upload
@@ -249,13 +254,21 @@ public class DocumentService {
                 .filter(d -> !"DELETED".equals(d.getStatus()))
                 .orElseThrow(() -> ApiException.notFound("Document not found: " + documentId));
 
-        // 3 — Generate pre-signed URL
+        // 3 — Generate pre-signed URL with attachment Content-Disposition (forces browser download)
         int expiryMinutes = storageService.getDefaultPresignedUrlExpiryMinutes();
-        String presignedUrl = storageService.generatePresignedDownloadUrl(document.getFileKey(), expiryMinutes);
+        String presignedUrl = storageService.generatePresignedDownloadUrl(
+                document.getFileKey(), expiryMinutes, document.getName());
 
         // 4 — Audit event
         publishAuditEvent(AuditEventType.DOCUMENT_DOWNLOADED, principal,
                 document.getWorkspaceId(), documentId);
+
+        // 5 — Evict analytics cache so total downloads counter refreshes immediately
+        try {
+            analyticsService.evictWorkspaceStats(document.getWorkspaceId());
+        } catch (Exception ex) {
+            log.warn("Analytics cache eviction failed (non-critical): {}", ex.getMessage());
+        }
 
         // Broadcast WebSocket download alert to the workspace
         try {
@@ -274,6 +287,27 @@ public class DocumentService {
 
         log.info("Pre-signed download URL issued — documentId={} userId={} expiryMinutes={}",
                 documentId, principal.userId(), expiryMinutes);
+
+        return new DownloadUrlResponse(presignedUrl, (long) expiryMinutes * 60);
+    }
+
+    /**
+     * Generates a pre-signed S3 preview URL (inline content-disposition, no forced download).
+     * Used by the preview pane — does NOT publish a DOCUMENT_DOWNLOADED audit event.
+     *
+     * @param documentId the UUID of the document
+     * @param principal  the authenticated caller
+     * @return a {@link DownloadUrlResponse} with a preview URL
+     */
+    @Transactional(readOnly = true)
+    public DownloadUrlResponse getPreviewUrl(UUID documentId, UserPrincipal principal) {
+        Document document = documentRepository.findById(documentId)
+                .filter(d -> !"DELETED".equals(d.getStatus()))
+                .orElseThrow(() -> ApiException.notFound("Document not found: " + documentId));
+
+        int expiryMinutes = storageService.getDefaultPresignedUrlExpiryMinutes();
+        // No filename param = inline disposition (opens in browser)
+        String presignedUrl = storageService.generatePresignedDownloadUrl(document.getFileKey(), expiryMinutes);
 
         return new DownloadUrlResponse(presignedUrl, (long) expiryMinutes * 60);
     }
@@ -297,13 +331,29 @@ public class DocumentService {
     @Transactional
     public void deleteDocument(UUID documentId, UUID workspaceId, UserPrincipal principal) {
 
+        // Enforce: only OWNER or EDITOR can delete documents
+        WorkspaceMember membership = workspaceMemberRepository
+                .findByWorkspaceIdAndUserId(workspaceId, principal.userId())
+                .orElseThrow(() -> ApiException.forbidden("You are not a member of this workspace."));
+
+        if (membership.getRole() == WorkspaceMember.MemberRole.VIEWER) {
+            throw ApiException.forbidden("VIEWER role cannot delete documents. Only EDITOR or OWNER can delete.");
+        }
+
         int updated = documentRepository.softDelete(documentId, workspaceId);
         if (updated == 0) {
             throw ApiException.notFound("Document not found or already deleted: " + documentId);
         }
 
-        log.info("Document soft-deleted — id={} workspaceId={} userId={}",
-                documentId, workspaceId, principal.userId());
+        log.info("Document soft-deleted — id={} workspaceId={} userId={} role={}",
+                documentId, workspaceId, principal.userId(), membership.getRole());
+
+        // Evict analytics cache so download counts refresh
+        try {
+            analyticsService.evictWorkspaceStats(workspaceId);
+        } catch (Exception ex) {
+            log.warn("Analytics cache eviction failed (non-critical): {}", ex.getMessage());
+        }
 
         publishAuditEvent(AuditEventType.DOCUMENT_DELETED, principal, workspaceId, documentId);
     }

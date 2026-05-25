@@ -98,6 +98,23 @@ spring:
     redis:
       time-to-live: 600000       # 10 minutes default TTL
 
+  # ============================================================
+  # Mail (Gmail SMTP with App Password)
+  # ============================================================
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${GMAIL_SENDER:tothehung2204@gmail.com}
+    password: ${GMAIL_PASSWORD:tsnfftndcrbzmehl}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+        debug: false
+
 # ============================================================
 # Server
 # ============================================================

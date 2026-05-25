@@ -6,29 +6,27 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
  * Spring Data JPA repository for {@link User} entities.
- *
- * <p>All finders are scoped to a single organisation to enforce tenant isolation
- * at the query level, in addition to any database row-level security policies.</p>
  */
 @Repository
 public interface UserRepository extends JpaRepository<User, UUID> {
 
     /**
      * Looks up a user by e-mail address across <em>all</em> organisations.
-     *
-     * <p>Use this only in cross-tenant administrative flows or when the
-     * organisation is unknown.  Prefer
-     * {@link #findByEmailAndOrganizationId(String, UUID)} in normal login flows.</p>
-     *
-     * @param email the e-mail address to search for (case-sensitive as stored)
-     * @return an {@link Optional} containing the user, or empty if not found
+     * Returns only one result (used for single-org lookups).
      */
     Optional<User> findByEmail(String email);
+
+    /**
+     * Returns ALL users with the given email across all organizations.
+     * Used by the multi-org login flow to present an org selector.
+     */
+    List<User> findAllByEmail(String email);
 
     /**
      * Looks up a user by e-mail address <em>within a specific organisation</em>.

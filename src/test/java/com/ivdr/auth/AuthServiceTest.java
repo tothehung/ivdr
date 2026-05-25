@@ -145,7 +145,7 @@ class AuthServiceTest {
     void register_success() {
         // ── Arrange ──────────────────────────────────────────────────────────
         RegisterRequest req = new RegisterRequest(
-                "Acme Corp", "Alice Smith", TEST_EMAIL, TEST_PASSWORD);
+                "Acme Corp", "Alice Smith", TEST_EMAIL, TEST_PASSWORD, null, null);
 
         // Slug is fresh — no collision
         when(organizationRepository.existsBySlug(anyString())).thenReturn(false);
@@ -192,7 +192,7 @@ class AuthServiceTest {
     void register_emailAlreadyExists_throwsConflict() {
         // ── Arrange ──────────────────────────────────────────────────────────
         RegisterRequest req = new RegisterRequest(
-                "Acme Corp", "Alice Smith", TEST_EMAIL, TEST_PASSWORD);
+                "Acme Corp", "Alice Smith", TEST_EMAIL, TEST_PASSWORD, null, null);
 
         // Slug check passes (org name is new)
         when(organizationRepository.existsBySlug(anyString())).thenReturn(false);
@@ -231,7 +231,7 @@ class AuthServiceTest {
     @DisplayName("login() — valid credentials — returns TokenResponse with both tokens")
     void login_success() {
         // ── Arrange ──────────────────────────────────────────────────────────
-        LoginRequest req = new LoginRequest(TEST_EMAIL, TEST_PASSWORD);
+        LoginRequest req = new LoginRequest(TEST_EMAIL, TEST_PASSWORD, null);
 
         when(userRepository.findByEmail(TEST_EMAIL)).thenReturn(Optional.of(testUser));
         when(passwordEncoder.matches(TEST_PASSWORD, HASHED_PW)).thenReturn(true);
@@ -272,7 +272,7 @@ class AuthServiceTest {
     @DisplayName("login() — wrong password — throws AuthenticationException (Unauthorized)")
     void login_wrongPassword_throwsUnauthorized() {
         // ── Arrange ──────────────────────────────────────────────────────────
-        LoginRequest req = new LoginRequest(TEST_EMAIL, "wrongP@ss");
+        LoginRequest req = new LoginRequest(TEST_EMAIL, "wrongP@ss", null);
 
         when(userRepository.findByEmail(TEST_EMAIL)).thenReturn(Optional.of(testUser));
         // Password does NOT match
@@ -308,7 +308,7 @@ class AuthServiceTest {
         // Give the user a future lock time
         testUser.setLockedUntil(LocalDateTime.now().plusMinutes(10));
 
-        LoginRequest req = new LoginRequest(TEST_EMAIL, TEST_PASSWORD);
+        LoginRequest req = new LoginRequest(TEST_EMAIL, TEST_PASSWORD, null);
         when(userRepository.findByEmail(TEST_EMAIL)).thenReturn(Optional.of(testUser));
 
         // ── Act & Assert ──────────────────────────────────────────────────────
@@ -336,7 +336,7 @@ class AuthServiceTest {
         // User already has 4 recorded failures — next failure (the 5th) should lock.
         testUser.setFailedLoginCount(4);
 
-        LoginRequest req = new LoginRequest(TEST_EMAIL, "badPassword");
+        LoginRequest req = new LoginRequest(TEST_EMAIL, "badPassword", null);
         when(userRepository.findByEmail(TEST_EMAIL)).thenReturn(Optional.of(testUser));
         when(passwordEncoder.matches("badPassword", HASHED_PW)).thenReturn(false);
 

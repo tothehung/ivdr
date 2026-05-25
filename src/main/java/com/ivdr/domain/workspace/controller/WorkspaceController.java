@@ -134,6 +134,24 @@ public class WorkspaceController {
     // =========================================================================
 
     /**
+     * Retrieves all members of a specific workspace.
+     *
+     * <p>The caller must be a member of the workspace.
+     *
+     * @param id        the workspace UUID
+     * @param principal the authenticated caller
+     * @return {@code 200 OK} with the list of members
+     */
+    @GetMapping("/{id}/members")
+    public ResponseEntity<ApiResponse<java.util.List<MemberResponse>>> getMembers(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal UserPrincipal principal) {
+
+        java.util.List<MemberResponse> members = workspaceService.getMembers(id, principal);
+        return ResponseEntity.ok(ApiResponse.ok(members));
+    }
+
+    /**
      * Adds a user to the specified workspace with the given role.
      *
      * <p>Only a workspace {@code OWNER} may invoke this endpoint.

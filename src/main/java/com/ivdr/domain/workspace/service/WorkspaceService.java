@@ -172,6 +172,38 @@ public class WorkspaceService {
     }
 
     /**
+     * Retrieves all members of a specific workspace.
+     *
+     * <p>The caller must be a member of the workspace.
+     *
+     * @param workspaceId the workspace UUID
+     * @param principal   the authenticated user
+     * @return a list of {@link MemberResponse} objects
+     */
+    @Transactional(readOnly = true)
+    public List<MemberResponse> getMembers(UUID workspaceId, UserPrincipal principal) {
+        validateMembership(workspaceId, principal.userId());
+        findWorkspaceOrThrow(workspaceId);
+
+        List<WorkspaceMember> members = memberRepository.findAllByWorkspaceId(workspaceId);
+        
+        List<UUID> userIds = members.stream().map(WorkspaceMember::getUserId).toList();
+        List<User> users = userRepository.findAllById(userIds);
+        Map<UUID, User> userMap = users.stream().collect(java.util.stream.Collectors.toMap(User::getId, u -> u));
+
+        return members.stream().map(m -> {
+            User u = userMap.get(m.getUserId());
+            return new MemberResponse(
+                    u.getId(),
+                    u.getEmail(),
+                    u.getFullName(),
+                    m.getRole().name(),
+                    m.getJoinedAt()
+            );
+        }).toList();
+    }
+
+    /**
      * Adds a user to a workspace with the specified role.
      *
      * <p>Only a workspace {@link MemberRole#OWNER} may add members.  The target user

@@ -8,14 +8,6 @@ import java.util.UUID;
 
 /**
  * Namespace class that groups all Auth-domain Data Transfer Objects.
- *
- * <p>Using inner {@code record} types keeps related DTOs co-located and avoids
- * cluttering the package with a large number of single-type files.  Each record
- * is effectively a public, immutable DTO with compiler-generated accessors,
- * {@code equals}, {@code hashCode}, and {@code toString}.</p>
- *
- * <p>Validation annotations on record components are processed by Bean Validation
- * when the record is used as a {@code @Valid} {@code @RequestBody} parameter.</p>
  */
 public final class AuthDtos {
 
@@ -28,14 +20,6 @@ public final class AuthDtos {
 
     /**
      * Payload for the {@code POST /auth/register} endpoint.
-     *
-     * <p>A successful registration creates a new {@link com.ivdr.domain.auth.entity.Organization}
-     * and its first admin {@link com.ivdr.domain.auth.entity.User} in a single transaction.</p>
-     *
-     * @param organizationName human-readable name for the new tenant
-     * @param fullName         display name of the registering user
-     * @param email            login e-mail address
-     * @param password         plain-text password (min 8 chars); hashed before storage
      */
     public record RegisterRequest(
             @NotBlank(message = "Organization name is required")
@@ -50,14 +34,15 @@ public final class AuthDtos {
 
             @Size(min = 8, message = "Password must be at least 8 characters")
             @NotBlank(message = "Password is required")
-            String password
+            String password,
+
+            String phone,
+            String jobTitle
     ) {}
 
     /**
      * Payload for the {@code POST /auth/login} endpoint.
-     *
-     * @param email    the user's e-mail address
-     * @param password the user's plain-text password
+     * organizationId is optional — if provided, login is scoped to that org.
      */
     public record LoginRequest(
             @Email(message = "A valid e-mail address is required")
@@ -65,17 +50,45 @@ public final class AuthDtos {
             String email,
 
             @NotBlank(message = "Password is required")
-            String password
+            String password,
+
+            UUID organizationId
     ) {}
 
     /**
      * Payload for the {@code POST /auth/refresh} endpoint.
-     *
-     * @param refreshToken the opaque refresh token previously issued by the server
      */
     public record RefreshRequest(
             @NotBlank(message = "Refresh token is required")
             String refreshToken
+    ) {}
+
+    /**
+     * Request to send an OTP email before completing registration.
+     */
+    public record SendOtpRequest(
+            @Email(message = "A valid e-mail address is required")
+            @NotBlank(message = "Email is required")
+            String email,
+
+            @NotBlank(message = "Full name is required")
+            String fullName,
+
+            @NotBlank(message = "Organization name is required")
+            String organizationName
+    ) {}
+
+    /**
+     * Payload to verify OTP code sent by email.
+     */
+    public record OtpVerifyRequest(
+            @Email(message = "A valid e-mail address is required")
+            @NotBlank(message = "Email is required")
+            String email,
+
+            @NotBlank(message = "OTP code is required")
+            @Size(min = 6, max = 6, message = "OTP must be exactly 6 digits")
+            String otp
     ) {}
 
     // -------------------------------------------------------------------------
@@ -84,11 +97,6 @@ public final class AuthDtos {
 
     /**
      * Token bundle returned on successful authentication (login, register, refresh).
-     *
-     * @param accessToken  short-lived JWT bearer token
-     * @param refreshToken long-lived opaque token for obtaining new access tokens
-     * @param expiresIn    access-token lifetime in seconds
-     * @param user         lightweight profile of the authenticated user
      */
     public record TokenResponse(
             String accessToken,
@@ -113,5 +121,24 @@ public final class AuthDtos {
             String email,
             String fullName,
             String role
+    ) {}
+
+    /**
+     * Response payload sent when an OTP email is generated/sent.
+     */
+    public record OtpSentResponse(
+            String message,
+            String email,
+            boolean success
+    ) {}
+
+    /**
+     * Simple projection of organization info.
+     */
+    public record OrganizationInfo(
+            UUID id,
+            String name,
+            String slug,
+            String plan
     ) {}
 }

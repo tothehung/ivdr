@@ -240,6 +240,31 @@ public class DocumentController {
     }
 
     // =========================================================================
+    // GET /{documentId}/preview-url  — Get inline preview URL (no download audit)
+    // =========================================================================
+
+    /**
+     * Returns a pre-signed S3 URL for previewing the document inline in the browser.
+     * Unlike download-url, this does NOT record a DOCUMENT_DOWNLOADED audit event.
+     *
+     * @param workspaceId UUID of the workspace
+     * @param documentId  UUID of the document to preview
+     * @param principal   the authenticated user
+     * @return 200 OK with the pre-signed preview URL
+     */
+    @GetMapping("/{documentId}/preview-url")
+    public ResponseEntity<DownloadUrlResponse> getPreviewUrl(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID documentId,
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        log.debug("Preview URL requested — documentId={} userId={}", documentId, principal.userId());
+
+        DownloadUrlResponse response = documentService.getPreviewUrl(documentId, principal);
+        return ResponseEntity.ok(response);
+    }
+
+    // =========================================================================
     // DELETE /{documentId}  — Soft-delete a document
     // =========================================================================
 

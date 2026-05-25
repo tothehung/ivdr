@@ -158,15 +158,37 @@ public class StorageService {
      * @throws ApiException if URL generation fails
      */
     public String generatePresignedDownloadUrl(String fileKey, int expiryMinutes) {
-        log.debug("Generating pre-signed URL — key={} expiryMinutes={}", fileKey, expiryMinutes);
+        return generatePresignedDownloadUrl(fileKey, expiryMinutes, null);
+    }
+
+    /**
+     * Generates a pre-signed HTTPS URL for the given S3 object.
+     *
+     * @param fileKey       the S3 object key
+     * @param expiryMinutes lifetime of the URL in minutes
+     * @param filename      if non-null, adds Content-Disposition: attachment header to force download
+     * @return an HTTPS pre-signed URL string
+     */
+    public String generatePresignedDownloadUrl(String fileKey, int expiryMinutes, String filename) {
+        log.debug("Generating pre-signed URL — key={} expiryMinutes={} forceDownload={}",
+                fileKey, expiryMinutes, filename != null);
 
         try {
+            var getObjectRequestBuilder = software.amazon.awssdk.services.s3.model.GetObjectRequest.builder()
+                    .bucket(bucketName)
+                    .key(fileKey);
+
+            // If filename is provided, force browser to download instead of rendering inline
+            if (filename != null && !filename.isBlank()) {
+                String safeFilename = filename.replaceAll("[^\\x20-\\x7E]", "_");
+                getObjectRequestBuilder.responseContentDisposition(
+                        "attachment; filename=\"" + safeFilename + "\""
+                );
+            }
+
             GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
                     .signatureDuration(Duration.ofMinutes(expiryMinutes))
-                    .getObjectRequest(r -> r
-                            .bucket(bucketName)
-                            .key(fileKey)
-                            .build())
+                    .getObjectRequest(getObjectRequestBuilder.build())
                     .build();
 
             PresignedGetObjectRequest presigned = s3Presigner.presignGetObject(presignRequest);

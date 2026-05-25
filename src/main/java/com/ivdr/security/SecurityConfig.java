@@ -61,13 +61,18 @@ public class SecurityConfig {
     private static final String[] PUBLIC_POST_PATHS = {
             "/auth/register",
             "/auth/login",
-            "/auth/refresh"
+            "/auth/refresh",
+            "/auth/logout",
+            "/auth/send-otp",
+            "/auth/verify-otp"
     };
 
     private static final String[] PUBLIC_GET_PATHS = {
             "/actuator/health",
+            "/auth/orgs",
             "/",
             "/index.html",
+            "/neuralyn.html",
             "/favicon.ico",
             "/css/**",
             "/js/**"
@@ -75,7 +80,10 @@ public class SecurityConfig {
 
     private static final String[] PUBLIC_WILDCARD_PATHS = {
             "/swagger-ui/**",
+            "/swagger-ui.html",
+            "/swagger-ui",
             "/api-docs/**",
+            "/api-docs",
             "/ws/**"
     };
 

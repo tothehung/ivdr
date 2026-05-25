@@ -25,9 +25,11 @@ import java.nio.charset.StandardCharsets;
 
 import java.text.Normalizer;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Core authentication service for the IVDR platform.
@@ -175,13 +177,39 @@ public class AuthService {
      * @return token bundle for the authenticated user
      * @throws com.ivdr.exception.AuthenticationException on any authentication failure
      */
+    /**
+     * Returns all organizations a given email address belongs to.
+     * Used by the frontend to populate the org-selector before login.
+     */
+    @Transactional(readOnly = true)
+    public List<AuthDtos.OrganizationInfo> findOrganizationsByEmail(String email) {
+        String normalizedEmail = email.toLowerCase(Locale.ROOT);
+        return userRepository.findAllByEmail(normalizedEmail)
+                .stream()
+                .filter(u -> u.isActive() && u.getOrganization() != null)
+                .map(u -> new AuthDtos.OrganizationInfo(
+                        u.getOrganization().getId(),
+                        u.getOrganization().getName(),
+                        u.getOrganization().getSlug(),
+                        u.getOrganization().getPlan()
+                ))
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
     @Transactional
     public TokenResponse login(LoginRequest req) {
         String normalizedEmail = req.email().toLowerCase(Locale.ROOT);
 
-        // --- 1. Look up user -----------------------------------------------------
-        User user = userRepository.findByEmail(normalizedEmail)
-                .orElseThrow(() -> ApiException.unauthorized("Invalid credentials"));
+        // --- 1. Look up user — org-scoped if organizationId provided -----------
+        User user;
+        if (req.organizationId() != null) {
+            user = userRepository.findByEmailAndOrganizationId(normalizedEmail, req.organizationId())
+                    .orElseThrow(() -> ApiException.unauthorized("Invalid credentials"));
+        } else {
+            user = userRepository.findByEmail(normalizedEmail)
+                    .orElseThrow(() -> ApiException.unauthorized("Invalid credentials"));
+        }
 
         // --- 2. Active check -----------------------------------------------------
         if (!user.isActive()) {
