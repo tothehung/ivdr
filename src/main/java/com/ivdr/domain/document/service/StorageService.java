@@ -282,6 +282,23 @@ public class StorageService {
      * @param filename    original filename (will be sanitised)
      * @return formatted S3 key string
      */
+    public byte[] downloadFile(String fileKey) {
+        log.debug("Downloading S3 object — bucket={} key={}", bucketName, fileKey);
+
+        software.amazon.awssdk.services.s3.model.GetObjectRequest getRequest = 
+                software.amazon.awssdk.services.s3.model.GetObjectRequest.builder()
+                        .bucket(bucketName)
+                        .key(fileKey)
+                        .build();
+
+        try {
+            return s3Client.getObject(getRequest, software.amazon.awssdk.core.sync.ResponseTransformer.toBytes()).asByteArray();
+        } catch (Exception ex) {
+            log.error("S3 download failed — key={} error={}", fileKey, ex.getMessage(), ex);
+            throw ApiException.internalError("Failed to download file from storage: " + ex.getMessage());
+        }
+    }
+
     private String buildKey(UUID orgId, UUID workspaceId, String filename) {
         // Sanitise filename: replace whitespace and non-safe URL characters
         String safeFilename = filename.replaceAll("[^a-zA-Z0-9._\\-]", "_");

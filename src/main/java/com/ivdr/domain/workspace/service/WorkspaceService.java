@@ -109,7 +109,7 @@ public class WorkspaceService {
                 Map.of("workspaceName", workspace.getName(), "isPrivate", workspace.isPrivate())
         );
 
-        return toWorkspaceResponse(workspace, 1);
+        return toWorkspaceResponse(workspace, 1, "OWNER");
     }
 
     /**
@@ -125,16 +125,21 @@ public class WorkspaceService {
     @Transactional(readOnly = true)
     public Page<WorkspaceResponse> listWorkspaces(UserPrincipal principal, Pageable pageable) {
 
-        // Collect all workspace IDs the user is a member of.
-        List<UUID> memberWorkspaceIds = memberRepository
-                .findAllByUserId(principal.userId())
-                .stream()
+        // Collect all workspace memberships the user is a member of.
+        List<WorkspaceMember> memberships = memberRepository.findAllByUserId(principal.userId());
+        if (memberships.isEmpty()) {
+            return Page.empty(pageable);
+        }
+
+        List<UUID> memberWorkspaceIds = memberships.stream()
                 .map(WorkspaceMember::getWorkspaceId)
                 .toList();
 
-        if (memberWorkspaceIds.isEmpty()) {
-            return Page.empty(pageable);
-        }
+        Map<UUID, String> roleMap = memberships.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        WorkspaceMember::getWorkspaceId,
+                        m -> m.getRole().name()
+                ));
 
         // Fetch only the workspace entities the user is a member of (efficient IN query).
         List<Workspace> all = workspaceRepository.findAllByIdIn(memberWorkspaceIds);
@@ -146,7 +151,11 @@ public class WorkspaceService {
                 ? List.of()
                 : all.subList(start, end)
                      .stream()
-                     .map(ws -> toWorkspaceResponse(ws, memberRepository.countByWorkspaceId(ws.getId())))
+                     .map(ws -> toWorkspaceResponse(
+                             ws, 
+                             memberRepository.countByWorkspaceId(ws.getId()), 
+                             roleMap.getOrDefault(ws.getId(), "VIEWER")
+                     ))
                      .toList();
 
         return new PageImpl<>(pageContent, pageable, all.size());
@@ -165,10 +174,12 @@ public class WorkspaceService {
     public WorkspaceResponse getWorkspace(UUID workspaceId, UserPrincipal principal) {
 
         Workspace workspace = findWorkspaceOrThrow(workspaceId);
-        validateMembership(workspaceId, principal.userId()); // any role is acceptable
+        WorkspaceMember membership = memberRepository
+                .findByWorkspaceIdAndUserId(workspaceId, principal.userId())
+                .orElseThrow(() -> ApiException.forbidden("You are not a member of workspace: " + workspaceId));
 
         int memberCount = (int) memberRepository.countByWorkspaceId(workspaceId);
-        return toWorkspaceResponse(workspace, memberCount);
+        return toWorkspaceResponse(workspace, memberCount, membership.getRole().name());
     }
 
     /**
@@ -425,7 +436,7 @@ public class WorkspaceService {
      * @param memberCount the current number of members
      * @return a new {@link WorkspaceResponse}
      */
-    private WorkspaceResponse toWorkspaceResponse(Workspace workspace, long memberCount) {
+    private WorkspaceResponse toWorkspaceResponse(Workspace workspace, long memberCount, String role) {
         return new WorkspaceResponse(
                 workspace.getId(),
                 workspace.getName(),
@@ -433,7 +444,8 @@ public class WorkspaceService {
                 workspace.isPrivate(),
                 workspace.getCreatedBy(),
                 workspace.getCreatedAt(),
-                (int) memberCount
+                (int) memberCount,
+                role
         );
     }
 

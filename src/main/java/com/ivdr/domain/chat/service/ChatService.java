@@ -90,7 +90,7 @@ public class ChatService {
     /**
      * Retrieves direct chat history between the principal and another user in a given workspace.
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public List<ChatMessageResponse> getDirectChatHistory(UUID workspaceId, UUID otherUserId, UserPrincipal principal) {
         boolean callerIsMember = workspaceMemberRepository
                 .findByWorkspaceIdAndUserId(workspaceId, principal.userId())
@@ -99,11 +99,48 @@ public class ChatService {
             throw ApiException.forbidden("You are not a member of this workspace.");
         }
 
+        // Auto-mark incoming messages from otherUserId to the caller as read
+        chatMessageRepository.markMessagesAsRead(workspaceId, otherUserId, principal.userId());
+
+        // Broadcast a read receipt so the other user's UI can update in real-time
+        ChatReadReceipt receipt = new ChatReadReceipt(workspaceId, principal.userId(), otherUserId);
+        messagingTemplate.convertAndSend("/topic/chat.read/" + workspaceId, receipt);
+
         return chatMessageRepository
                 .findDirectChatHistory(workspaceId, principal.userId(), otherUserId)
                 .stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public void markDirectMessagesAsRead(UUID workspaceId, UUID otherUserId, UUID callerId) {
+        boolean callerIsMember = workspaceMemberRepository
+                .findByWorkspaceIdAndUserId(workspaceId, callerId)
+                .isPresent();
+        if (!callerIsMember) {
+            throw ApiException.forbidden("You are not a member of this workspace.");
+        }
+
+        int updated = chatMessageRepository.markMessagesAsRead(workspaceId, otherUserId, callerId);
+        if (updated > 0) {
+            // Broadcast read receipt over WebSocket
+            ChatReadReceipt receipt = new ChatReadReceipt(workspaceId, callerId, otherUserId);
+            messagingTemplate.convertAndSend("/topic/chat.read/" + workspaceId, receipt);
+            log.debug("Read receipt sent: workspace={}, reader={}, sender={}", workspaceId, callerId, otherUserId);
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public List<UUID> getUnreadSenders(UUID workspaceId, UUID callerId) {
+        boolean callerIsMember = workspaceMemberRepository
+                .findByWorkspaceIdAndUserId(workspaceId, callerId)
+                .isPresent();
+        if (!callerIsMember) {
+            throw ApiException.forbidden("You are not a member of this workspace.");
+        }
+
+        return chatMessageRepository.findUnreadSenders(workspaceId, callerId);
     }
 
     private ChatMessageResponse toResponse(ChatMessage msg) {
@@ -113,7 +150,8 @@ public class ChatService {
                 msg.getSenderId(),
                 msg.getRecipientId(),
                 msg.getMessageText(),
-                msg.getCreatedAt()
+                msg.getCreatedAt(),
+                msg.isRead()
         );
     }
 }

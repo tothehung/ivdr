@@ -39,30 +39,24 @@ public class TenantContextService {
     // -------------------------------------------------------------------------
 
     /**
-     * PostgreSQL function that writes the tenant UUID into the session-level
-     * setting {@code app.tenant_id}, which is then read by RLS policies.
+     * PostgreSQL function that writes both the tenant UUID and user UUID
+     * into session-level settings.
      */
-    private static final String SET_TENANT_SQL = "SELECT set_tenant_context(?::uuid)";
-
-    /**
-     * Clears the tenant context by passing an empty string to the function.
-     * The RLS policies must handle an empty / null setting as "no tenant" access.
-     */
-    private static final String CLEAR_TENANT_SQL = "SELECT set_tenant_context(NULL::uuid)";
+    private static final String SET_SESSION_CONTEXT_SQL = "SELECT set_session_context(?::uuid, ?::uuid)";
 
     // -------------------------------------------------------------------------
-    // Thread-local storage — application-level tenant tracking
+    // Thread-local storage — application-level tenant and user tracking
     // -------------------------------------------------------------------------
 
     /**
-     * Holds the organisation UUID for the current request thread so that
-     * application code can call {@link #getCurrentOrgId()} without a DB call.
-     *
-     * <p><strong>Important:</strong> Always call {@link #clearTenant()} in a
-     * {@code finally} block or a framework cleanup hook to prevent leaking the
-     * value to the next request processed by the same thread.</p>
+     * Holds the organisation UUID for the current request thread.
      */
     private static final ThreadLocal<UUID> CURRENT_ORG_ID = new ThreadLocal<>();
+
+    /**
+     * Holds the user UUID for the current request thread.
+     */
+    private static final ThreadLocal<UUID> CURRENT_USER_ID = new ThreadLocal<>();
 
     // -------------------------------------------------------------------------
     // Dependencies
@@ -75,26 +69,28 @@ public class TenantContextService {
     // -------------------------------------------------------------------------
 
     /**
-     * Activates the tenant context for {@code organizationId} on both the
-     * database connection and the application-level thread-local.
-     *
-     * <p>This method is idempotent — calling it multiple times with the same
-     * value is safe (though redundant).</p>
-     *
-     * @param organizationId the tenant UUID to activate; must not be {@code null}
-     * @throws IllegalArgumentException if {@code organizationId} is {@code null}
+     * Activates the tenant context for {@code organizationId} and {@code userId}
+     * on both the database connection and the application-level thread-local.
      */
     public void setTenant(UUID organizationId) {
+        setTenant(organizationId, null);
+    }
+
+    /**
+     * Activates both tenant and user session context.
+     */
+    public void setTenant(UUID organizationId, UUID userId) {
         if (organizationId == null) {
             throw new IllegalArgumentException("organizationId must not be null");
         }
 
-        log.debug("Setting tenant context: organizationId={}", organizationId);
+        log.debug("Setting session context: organizationId={}, userId={}", organizationId, userId);
 
         // Write to the DB session — affects all subsequent queries on this connection.
         jdbcTemplate.execute((java.sql.Connection conn) -> {
-            try (java.sql.PreparedStatement ps = conn.prepareStatement(SET_TENANT_SQL)) {
+            try (java.sql.PreparedStatement ps = conn.prepareStatement(SET_SESSION_CONTEXT_SQL)) {
                 ps.setObject(1, organizationId);
+                ps.setObject(2, userId);
                 ps.execute();
             }
             return null;
@@ -102,21 +98,23 @@ public class TenantContextService {
 
         // Mirror at application level for lightweight reads.
         CURRENT_ORG_ID.set(organizationId);
+        if (userId != null) {
+            CURRENT_USER_ID.set(userId);
+        } else {
+            CURRENT_USER_ID.remove();
+        }
     }
 
     /**
-     * Resets the tenant context on both the database connection and the
-     * application-level thread-local.
-     *
-     * <p>Always call this in a {@code finally} block or a servlet filter to
-     * ensure the context is cleaned up even when an exception occurs.</p>
+     * Resets the tenant and user contexts on both the database connection and the
+     * application-level thread-locals.
      */
     public void clearTenant() {
-        log.debug("Clearing tenant context (was: {})", CURRENT_ORG_ID.get());
+        log.debug("Clearing session context (was: org={}, user={})", CURRENT_ORG_ID.get(), CURRENT_USER_ID.get());
 
         // Reset the DB session setting.
         jdbcTemplate.execute((java.sql.Connection conn) -> {
-            try (java.sql.PreparedStatement ps = conn.prepareStatement(CLEAR_TENANT_SQL)) {
+            try (java.sql.PreparedStatement ps = conn.prepareStatement("SELECT set_session_context(NULL::uuid, NULL::uuid)")) {
                 ps.execute();
             }
             return null;
@@ -124,17 +122,20 @@ public class TenantContextService {
 
         // Remove from thread-local to prevent memory leaks in thread pools.
         CURRENT_ORG_ID.remove();
+        CURRENT_USER_ID.remove();
     }
 
     /**
-     * Returns the organisation UUID currently bound to this thread, or
-     * {@code null} if no tenant has been activated.
-     *
-     * <p>This is a pure in-memory read — no database call is made.</p>
-     *
-     * @return the current organisation UUID, or {@code null}
+     * Returns the organisation UUID currently bound to this thread, or {@code null}.
      */
     public static UUID getCurrentOrgId() {
         return CURRENT_ORG_ID.get();
+    }
+
+    /**
+     * Returns the user UUID currently bound to this thread, or {@code null}.
+     */
+    public static UUID getCurrentUserId() {
+        return CURRENT_USER_ID.get();
     }
 }

@@ -2,9 +2,11 @@ package com.ivdr.domain.presence.controller;
 
 import com.ivdr.common.response.ApiResponse;
 import com.ivdr.domain.presence.service.PresenceService;
+import com.ivdr.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
@@ -129,15 +131,24 @@ public class PresenceController {
     // =========================================================================
 
     private UUID extractUserId(SimpMessageHeaderAccessor headerAccessor) {
+        // Try extracting user ID from the STOMP principal user first
+        java.security.Principal user = headerAccessor.getUser();
+        if (user instanceof UsernamePasswordAuthenticationToken auth) {
+            if (auth.getPrincipal() instanceof UserPrincipal userPrincipal) {
+                return userPrincipal.userId();
+            }
+        }
+
+        // Fallback to session attributes
         Map<String, Object> attrs = headerAccessor.getSessionAttributes();
         if (attrs == null) {
-            log.warn("STOMP message received with no session attributes — ignoring");
+            log.warn("STOMP message received with no authenticated user or session attributes — ignoring");
             return null;
         }
 
         Object raw = attrs.get(SESSION_ATTR_USER_ID);
         if (raw == null) {
-            log.warn("STOMP session has no '{}' attribute — ignoring message", SESSION_ATTR_USER_ID);
+            log.warn("STOMP session has no authenticated user or '{}' attribute — ignoring message", SESSION_ATTR_USER_ID);
             return null;
         }
 

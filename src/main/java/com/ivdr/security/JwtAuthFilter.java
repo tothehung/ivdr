@@ -89,12 +89,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
                 authenticateRequest(token, request);
             }
+            filterChain.doFilter(request, response);
         } catch (Exception ex) {
             // Never block the chain; Spring Security enforces authorization after the filter.
             log.warn("Could not set user authentication in security context: {}", ex.getMessage());
+            filterChain.doFilter(request, response);
+        } finally {
+            tenantContextService.clearTenant();
         }
-
-        filterChain.doFilter(request, response);
     }
 
     // -------------------------------------------------------------------------
@@ -145,7 +147,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         // Set the tenant context BEFORE populating the SecurityContext so that any
         // security expression evaluation that triggers a DB lookup already has the
         // correct tenant in scope.
-        tenantContextService.setTenant(orgId);
+        tenantContextService.setTenant(orgId, userId);
 
         SecurityContextHolder.getContext().setAuthentication(authentication);
 

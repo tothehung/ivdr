@@ -351,6 +351,20 @@ public class DocumentController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/{documentId}/content")
+    public ResponseEntity<String> getDocumentContent(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID documentId,
+            @RequestParam(value = "password", required = false) String password,
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        log.debug("Get content request received — documentId={} workspaceId={} userId={}",
+                documentId, workspaceId, principal.userId());
+
+        String content = documentService.getDocumentContent(workspaceId, documentId, password, principal);
+        return ResponseEntity.ok(content);
+    }
+
     @PutMapping("/{documentId}/content")
     public ResponseEntity<DocumentResponse> updateDocumentContent(
             @PathVariable UUID workspaceId,

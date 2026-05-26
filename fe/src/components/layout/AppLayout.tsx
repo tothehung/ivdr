@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet, Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/useAuthStore';
 import { LayoutDashboard, Folder, MessageSquare, BarChart, LogOut, Activity } from 'lucide-react';
+import { copyTextToClipboard } from '../../lib/utils';
 
 export default function AppLayout() {
   const { user, logout } = useAuthStore();
@@ -13,12 +14,14 @@ export default function AppLayout() {
     navigate('/login');
   };
 
-  const handleCopyId = () => {
+  const handleCopyId = async () => {
     const idToCopy = user?.userId || user?.id;
     if (idToCopy) {
-      navigator.clipboard.writeText(idToCopy);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      const success = await copyTextToClipboard(idToCopy);
+      if (success) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
     }
   };
 

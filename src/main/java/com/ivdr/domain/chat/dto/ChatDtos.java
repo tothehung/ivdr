@@ -18,6 +18,13 @@ public final class ChatDtos {
             UUID senderId,
             UUID recipientId,
             String messageText,
-            LocalDateTime createdAt
+            LocalDateTime createdAt,
+            boolean isRead
+    ) {}
+
+    public record ChatReadReceipt(
+            UUID workspaceId,
+            UUID readerId,
+            UUID senderId
     ) {}
 }

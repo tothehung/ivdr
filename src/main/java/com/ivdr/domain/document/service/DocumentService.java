@@ -625,7 +625,8 @@ public class DocumentService {
                 doc.getUploadedBy(),
                 doc.getCreatedAt(),
                 doc.getFolderId(),
-                doc.getPasswordHash() != null && !doc.getPasswordHash().isEmpty()
+                doc.getPasswordHash() != null && !doc.getPasswordHash().isEmpty(),
+                doc.getFileKey()
         );
     }
 
@@ -646,6 +647,38 @@ public class DocumentService {
             throw ApiException.internalError("SHA-256 algorithm not available: " + ex.getMessage());
         }
     }
+
+    /**
+     * Retrieves the text/code content of a document as a UTF-8 string.
+     * Enforces membership, existence, and password validation.
+     */
+    @Transactional(readOnly = true)
+    public String getDocumentContent(UUID workspaceId, UUID documentId, String password, UserPrincipal principal) {
+        // 1. Verify workspace membership
+        WorkspaceMember membership = workspaceMemberRepository
+                .findByWorkspaceIdAndUserId(workspaceId, principal.userId())
+                .orElseThrow(() -> ApiException.forbidden("You are not a member of this workspace."));
+
+        // 2. Verify document exists and belongs to the workspace
+        Document document = documentRepository.findById(documentId)
+                .filter(d -> !"DELETED".equals(d.getStatus()))
+                .filter(d -> d.getWorkspaceId().equals(workspaceId))
+                .orElseThrow(() -> ApiException.notFound("Document not found: " + documentId));
+
+        // 3. If password-protected, verify the password matches (bypassed for OWNER)
+        if (document.getPasswordHash() != null && !document.getPasswordHash().isEmpty()) {
+            if (membership.getRole() != WorkspaceMember.MemberRole.OWNER) {
+                if (password == null || password.isBlank() || !passwordEncoder.matches(password, document.getPasswordHash())) {
+                    throw ApiException.forbidden("This document is password protected. Correct password is required.");
+                }
+            }
+        }
+
+        // 4. Download file bytes and convert to a UTF-8 string
+        byte[] fileBytes = storageService.downloadFile(document.getFileKey());
+        return new String(fileBytes, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
 
     /**
      * Builds and publishes a typed {@link DocumentAuditEvent} via the Spring

@@ -69,4 +69,32 @@ public class ChatRestController {
         ChatMessageResponse response = chatService.saveAndRouteMessage(principal.userId(), scopedRequest);
         return ResponseEntity.ok(response);
     }
+
+    /**
+     * Gets the list of sender user IDs who have sent unread direct messages to the authenticated user.
+     */
+    @GetMapping("/unread")
+    public ResponseEntity<List<UUID>> getUnreadSenders(
+            @PathVariable UUID workspaceId,
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        log.debug("Fetching unread DM senders — workspaceId={} caller={}", workspaceId, principal.userId());
+        List<UUID> unread = chatService.getUnreadSenders(workspaceId, principal.userId());
+        return ResponseEntity.ok(unread);
+    }
+
+    /**
+     * Marks all unread direct messages from another member in a workspace as read.
+     */
+    @PostMapping("/direct/{otherUserId}/read")
+    public ResponseEntity<Void> markDirectMessagesAsRead(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID otherUserId,
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        log.debug("Marking messages from other user as read — workspaceId={} caller={} sender={}",
+                workspaceId, principal.userId(), otherUserId);
+        chatService.markDirectMessagesAsRead(workspaceId, otherUserId, principal.userId());
+        return ResponseEntity.ok().build();
+    }
 }

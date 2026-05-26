@@ -167,7 +167,8 @@ public final class DocumentDtos {
             UUID uploadedBy,
             LocalDateTime createdAt,
             UUID folderId,
-            boolean isPasswordProtected
+            boolean isPasswordProtected,
+            String fileKey
     ) {}
 
     /**

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../../lib/api';
+import { copyTextToClipboard } from '../../lib/utils';
 import { useWorkspaceStore } from '../../store/useWorkspaceStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import SockJS from 'sockjs-client';
@@ -47,6 +48,11 @@ interface PresenceDetail {
 export default function Documents() {
   const { activeWorkspace, setActiveWorkspace } = useWorkspaceStore();
   const { user } = useAuthStore();
+
+  // Refs for tracking chat drawer state in WebSockets without stale closures
+  const isChatOpenRef = useRef(false);
+  const chatModeRef = useRef<'group' | 'direct'>('group');
+  const chatRecipientIdRef = useRef<string | null>(null);
   
   const [documents, setDocuments] = useState<Document[]>([]);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
@@ -71,6 +77,7 @@ export default function Documents() {
   const [uploadName, setUploadName] = useState('');
   const [uploadDescription, setUploadDescription] = useState('');
   const [uploadTags, setUploadTags] = useState('');
+  const [uploadPassword, setUploadPassword] = useState('');
   const [isUploading, setIsUploading] = useState(false);
 
   // Preview Modal
@@ -129,6 +136,24 @@ export default function Documents() {
   const [chatRecipientId, setChatRecipientId] = useState<string | null>(null);
   const [stompClient, setStompClient] = useState<any>(null);
   const [isChatConnected, setIsChatConnected] = useState(false);
+
+  // Chat unread states
+  const [unreadGroup, setUnreadGroup] = useState(false);
+  const [unreadDirect, setUnreadDirect] = useState(false);
+  const [unreadSenders, setUnreadSenders] = useState<Record<string, boolean>>({});
+
+  // Sync refs with states to prevent WebSocket stale closures
+  useEffect(() => {
+    isChatOpenRef.current = isChatOpen;
+  }, [isChatOpen]);
+
+  useEffect(() => {
+    chatModeRef.current = chatMode;
+  }, [chatMode]);
+
+  useEffect(() => {
+    chatRecipientIdRef.current = chatRecipientId;
+  }, [chatRecipientId]);
 
   // Ref to chat message list for scroll anchoring
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -250,7 +275,14 @@ export default function Documents() {
     try {
       if (mode === 'group') {
         const res = await api.get(`/workspaces/${activeWorkspace.id}/chat/history`);
-        setChatMessages(res.data?.data || res.data || []);
+        const messages = res.data?.data || res.data || [];
+        setChatMessages(messages);
+        
+        // Save latest group message details to localStorage to track read status
+        if (messages.length > 0) {
+          const latestMsg = messages[messages.length - 1];
+          localStorage.setItem(`lastReadGroupMsg_${activeWorkspace.id}`, latestMsg.createdAt || latestMsg.id || '');
+        }
       } else if (recipientId) {
         const res = await api.get(`/workspaces/${activeWorkspace.id}/chat/direct/${recipientId}`);
         setChatMessages(res.data?.data || res.data || []);
@@ -267,6 +299,41 @@ export default function Documents() {
     fetchFolders(currentFolderId);
     fetchMembers();
     fetchPresence();
+
+    // Fetch initial unread DM senders
+    const loadUnreadSenders = async () => {
+      try {
+        const res = await api.get(`/workspaces/${activeWorkspace.id}/chat/unread`);
+        const senderIds: string[] = res.data || [];
+        const unreadMap: Record<string, boolean> = {};
+        senderIds.forEach(id => {
+          unreadMap[id] = true;
+        });
+        setUnreadSenders(unreadMap);
+        setUnreadDirect(senderIds.length > 0);
+      } catch (err) {
+        console.error('Failed to fetch unread DM senders', err);
+      }
+    };
+    loadUnreadSenders();
+
+    // Check if group chat has unread messages based on localStorage
+    const checkGroupUnread = async () => {
+      try {
+        const res = await api.get(`/workspaces/${activeWorkspace.id}/chat/history`);
+        const messages = res.data?.data || res.data || [];
+        if (messages.length > 0) {
+          const latestMsg = messages[messages.length - 1];
+          const lastRead = localStorage.getItem(`lastReadGroupMsg_${activeWorkspace.id}`);
+          if (!lastRead || lastRead !== (latestMsg.createdAt || latestMsg.id)) {
+            setUnreadGroup(true);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to check unread group chat status', err);
+      }
+    };
+    checkGroupUnread();
 
     // Poll presence every 10 seconds
     const interval = setInterval(fetchPresence, 10000);
@@ -303,6 +370,13 @@ export default function Documents() {
           if (prev.some(m => m.id === body.id)) return prev;
           return [...prev, body];
         });
+
+        // Trigger unread indicator if not currently viewing group chat
+        if (!isChatOpenRef.current || chatModeRef.current !== 'group') {
+          setUnreadGroup(true);
+        } else {
+          localStorage.setItem(`lastReadGroupMsg_${activeWorkspace.id}`, body.createdAt || body.id || '');
+        }
       });
 
       // Subscribe to direct message topic (broadcast-based, filtered client-side)
@@ -312,6 +386,33 @@ export default function Documents() {
           if (prev.some(m => m.id === body.id)) return prev;
           return [...prev, body];
         });
+
+        const currentUserId = useAuthStore.getState().user?.userId || useAuthStore.getState().user?.id;
+        const isFromMe = body.senderId === currentUserId;
+
+        if (!isFromMe) {
+          if (isChatOpenRef.current && chatModeRef.current === 'direct' && chatRecipientIdRef.current === body.senderId) {
+            // Auto-read via API
+            api.post(`/workspaces/${activeWorkspace.id}/chat/direct/${body.senderId}/read`).catch(console.error);
+          } else {
+            // Mark as unread
+            setUnreadDirect(true);
+            setUnreadSenders((prev) => ({ ...prev, [body.senderId]: true }));
+          }
+        }
+      });
+
+      // Subscribe to DM read receipts
+      client.subscribe(`/topic/chat.read/${activeWorkspace.id}`, (message) => {
+        const receipt = JSON.parse(message.body);
+        const currentUserId = useAuthStore.getState().user?.userId || useAuthStore.getState().user?.id;
+        if (receipt.senderId === currentUserId && receipt.readerId === chatRecipientIdRef.current) {
+          setChatMessages((prev) =>
+            prev.map((msg) =>
+              msg.senderId === currentUserId ? { ...msg, isRead: true } : msg
+            )
+          );
+        }
       });
 
       // Subscribe to presence updates
@@ -451,12 +552,29 @@ export default function Documents() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
 
-  // Handle switching chat context
+  // Handle switching chat context and marking messages as read
   useEffect(() => {
+    if (!activeWorkspace) return;
     if (isChatOpen) {
       fetchChatHistory(chatMode, chatRecipientId);
+
+      if (chatMode === 'group') {
+        setUnreadGroup(false);
+      } else if (chatMode === 'direct' && chatRecipientId) {
+        // Clear unread status locally for this member
+        setUnreadSenders((prev) => {
+          const copy = { ...prev };
+          delete copy[chatRecipientId];
+          const hasUnread = Object.values(copy).some(v => v === true);
+          setUnreadDirect(hasUnread);
+          return copy;
+        });
+
+        // Mark as read on backend
+        api.post(`/workspaces/${activeWorkspace.id}/chat/direct/${chatRecipientId}/read`).catch(console.error);
+      }
     }
-  }, [chatMode, chatRecipientId, isChatOpen]);
+  }, [chatMode, chatRecipientId, isChatOpen, activeWorkspace?.id]);
 
   if (!activeWorkspace) {
     return (
@@ -549,10 +667,19 @@ export default function Documents() {
     }
 
     try {
-      await api.post(`/workspaces/${activeWorkspace.id}/documents/upload`, formData, {
+      const response = await api.post(`/workspaces/${activeWorkspace.id}/documents/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         params: { folderId: currentFolderId || undefined }
       });
+      const newDoc = response.data?.data || response.data;
+      
+      if (isOwner && uploadPassword.trim() && newDoc?.id) {
+        await api.post(`/workspaces/${activeWorkspace.id}/documents/${newDoc.id}/password`, {
+          password: uploadPassword.trim()
+        });
+      }
+      
+      setUploadPassword('');
       setIsUploadModalOpen(false);
       setSelectedFile(null);
       fetchDocuments(currentFolderId);
@@ -724,10 +851,12 @@ export default function Documents() {
 
         if (type === 'code') {
           try {
-            const textRes = await fetch(url);
-            if (!textRes.ok) throw new Error('Failed to fetch file text content');
-            const text = await textRes.text();
+            const contentRes = await api.get(`/workspaces/${activeWorkspace.id}/documents/${passwordDoc.id}/content`, {
+              params: { password: docPassword }
+            });
+            const text = typeof contentRes.data === 'string' ? contentRes.data : JSON.stringify(contentRes.data);
             setCodeContent(text);
+            setEditingText(text);
           } catch (fetchErr) {
             setPreviewError('Cannot load visual text preview. Download the file to view its full code.');
             setPreviewType('fallback');
@@ -762,9 +891,9 @@ export default function Documents() {
   };
 
   // --- WebSocket Realtime Chat Sender ---
-  const sendChatMessage = (e: React.FormEvent) => {
+  const sendChatMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!stompClient || !isChatConnected || !chatInput.trim() || !activeWorkspace) return;
+    if (!chatInput.trim() || !activeWorkspace) return;
 
     const payload = {
       workspaceId: activeWorkspace.id,
@@ -772,12 +901,35 @@ export default function Documents() {
       messageText: chatInput.trim(),
     };
 
-    stompClient.publish({
-      destination: '/app/chat.send',
-      body: JSON.stringify(payload),
-    });
-
+    const text = chatInput.trim();
     setChatInput('');
+
+    // If STOMP is connected, attempt to publish via STOMP
+    if (isChatConnected && stompClient && stompClient.connected) {
+      try {
+        stompClient.publish({
+          destination: '/app/chat.send',
+          body: JSON.stringify(payload),
+        });
+        return;
+      } catch (err) {
+        console.warn('STOMP publish failed, falling back to REST API', err);
+      }
+    }
+
+    // Fallback: send message via HTTP REST API
+    try {
+      const res = await api.post(`/workspaces/${activeWorkspace.id}/chat/send`, payload);
+      const newMsg = res.data?.data || res.data;
+      setChatMessages((prev) => {
+        if (prev.some(m => m.id === newMsg.id)) return prev;
+        return [...prev, newMsg];
+      });
+    } catch (err: any) {
+      console.error('Failed to send message via REST API fallback', err);
+      alert(err.response?.data?.message || 'Failed to send message. Please check your connection.');
+      setChatInput(text); // restore input text
+    }
   };
 
   // --- Document Preview & Content Type Resolving ---
@@ -854,9 +1006,8 @@ export default function Documents() {
 
       if (type === 'code') {
         try {
-          const textRes = await fetch(url);
-          if (!textRes.ok) throw new Error('CORS or connection failed fetching code');
-          const text = await textRes.text();
+          const contentRes = await api.get(`/workspaces/${activeWorkspace.id}/documents/${doc.id}/content`);
+          const text = typeof contentRes.data === 'string' ? contentRes.data : JSON.stringify(contentRes.data);
           setCodeContent(text);
           setEditingText(text);
         } catch (fetchErr) {
@@ -971,14 +1122,16 @@ export default function Documents() {
     };
   };
 
-  const copyToClipboard = (text: string, type: 'ws' | 'member', memberId?: string) => {
-    navigator.clipboard.writeText(text);
-    if (type === 'ws') {
-      setCopiedWsId(true);
-      setTimeout(() => setCopiedWsId(false), 2000);
-    } else if (type === 'member' && memberId) {
-      setCopiedMemberId(memberId);
-      setTimeout(() => setCopiedMemberId(null), 2000);
+  const copyToClipboard = async (text: string, type: 'ws' | 'member', memberId?: string) => {
+    const success = await copyTextToClipboard(text);
+    if (success) {
+      if (type === 'ws') {
+        setCopiedWsId(true);
+        setTimeout(() => setCopiedWsId(false), 2000);
+      } else if (type === 'member' && memberId) {
+        setCopiedMemberId(memberId);
+        setTimeout(() => setCopiedMemberId(null), 2000);
+      }
     }
   };
 
@@ -1000,7 +1153,7 @@ export default function Documents() {
           <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-md p-6">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-bold">Document Metadata Details</h3>
-              <button onClick={() => { setIsUploadModalOpen(false); setSelectedFile(null); }} className="text-muted-foreground hover:text-foreground">
+              <button onClick={() => { setIsUploadModalOpen(false); setSelectedFile(null); setUploadPassword(''); }} className="text-muted-foreground hover:text-foreground">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1034,8 +1187,20 @@ export default function Documents() {
                   className="bg-background border border-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
+              {isOwner && (
+                <div className="flex flex-col gap-2">
+                  <label className="text-sm font-medium">Password Protection (Optional)</label>
+                  <input 
+                    type="password" 
+                    value={uploadPassword}
+                    onChange={e => setUploadPassword(e.target.value)}
+                    placeholder="Set secure password for this file..."
+                    className="bg-background border border-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+              )}
               <div className="flex justify-end gap-3 mt-4">
-                <button type="button" onClick={() => { setIsUploadModalOpen(false); setSelectedFile(null); }} className="px-4 py-2 rounded-lg text-sm font-medium hover:bg-accent transition-colors">
+                <button type="button" onClick={() => { setIsUploadModalOpen(false); setSelectedFile(null); setUploadPassword(''); }} className="px-4 py-2 rounded-lg text-sm font-medium hover:bg-accent transition-colors">
                   Cancel
                 </button>
                 <button type="submit" disabled={isUploading} className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity">
@@ -1169,7 +1334,7 @@ export default function Documents() {
                     </button>
                   </div>
                 ) : previewType === 'pdf' && previewUrl ? (
-                  <iframe src={previewUrl} className="w-full h-full border-none" title="Document Preview" />
+                  <iframe src={previewUrl} className="absolute inset-0 w-full h-full border-none" title="Document Preview" />
                 ) : previewType === 'image' && previewUrl ? (
                   <img src={previewUrl} className="max-w-full max-h-full object-contain p-4" alt="Preview" />
                 ) : previewType === 'code' && codeContent ? (
@@ -1177,10 +1342,10 @@ export default function Documents() {
                     <textarea
                       value={editingText}
                       onChange={(e) => setEditingText(e.target.value)}
-                      className="w-full h-full p-6 text-xs text-zinc-300 font-mono bg-zinc-950 border-none outline-none resize-none select-text text-left"
+                      className="absolute inset-0 w-full h-full p-6 text-xs text-zinc-300 font-mono bg-zinc-950 border-none outline-none resize-none select-text text-left"
                     />
                   ) : (
-                    <pre className="w-full h-full p-6 text-xs text-zinc-300 font-mono overflow-auto whitespace-pre select-text text-left bg-zinc-950">
+                    <pre className="absolute inset-0 w-full h-full p-6 text-xs text-zinc-300 font-mono overflow-auto whitespace-pre select-text text-left bg-zinc-950">
                       <code>{codeContent}</code>
                     </pre>
                   )
@@ -1362,9 +1527,22 @@ export default function Documents() {
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button 
               onClick={() => setIsChatOpen(!isChatOpen)}
-              className="flex items-center gap-2 bg-zinc-800 text-foreground border border-border px-3.5 py-2 rounded-lg text-sm font-semibold hover:bg-accent transition-all cursor-pointer shadow-sm"
+              className="relative flex items-center gap-2 bg-zinc-800 text-foreground border border-border px-3.5 py-2 rounded-lg text-sm font-semibold hover:bg-accent transition-all cursor-pointer shadow-sm animate-fade-in"
             >
-              <MessageSquare className="w-4 h-4" /> Chat Drawer
+              <MessageSquare className="w-4 h-4" /> 
+              <span>Chat Drawer</span>
+              {unreadGroup && (
+                <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                </span>
+              )}
+              {unreadDirect && !unreadGroup && (
+                <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                </span>
+              )}
             </button>
 
             {isEditor && (
@@ -1501,7 +1679,10 @@ export default function Documents() {
                         key={doc.id} 
                         onClick={() => {
                           if (isLink) {
-                            window.open(doc.fileKey, '_blank');
+                            if (doc.fileKey) {
+                              const url = doc.fileKey.startsWith('http://') || doc.fileKey.startsWith('https://') ? doc.fileKey : `https://${doc.fileKey}`;
+                              window.open(url, '_blank');
+                            }
                           } else {
                             handlePreviewDocument(doc);
                           }
@@ -1516,7 +1697,7 @@ export default function Documents() {
                              ['JS','JSX','TS','TSX','HTML','CSS','JSON','PY','JAVA'].includes(dispType) ? <FileCode className="w-5 h-5 text-blue-400" /> :
                              <File className="w-5 h-5 text-muted-foreground" />}
                             <span className="truncate max-w-[200px] sm:max-w-xs flex items-center gap-1.5">
-                              {doc.name || 'Untitled Document'}
+                               {doc.name || 'Untitled Document'}
                               {doc.isPasswordProtected && <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
                             </span>
                           </div>
@@ -1543,7 +1724,12 @@ export default function Documents() {
                             )}
                             {isLink && (
                               <button 
-                                onClick={() => window.open(doc.fileKey, '_blank')}
+                                onClick={() => {
+                                  if (doc.fileKey) {
+                                    const url = doc.fileKey.startsWith('http://') || doc.fileKey.startsWith('https://') ? doc.fileKey : `https://${doc.fileKey}`;
+                                    window.open(url, '_blank');
+                                  }
+                                }}
                                 className="p-1.5 hover:bg-background rounded text-muted-foreground hover:text-foreground cursor-pointer" title="Open Link"
                               >
                                 <Eye className="w-4 h-4" />
@@ -1864,10 +2050,10 @@ export default function Documents() {
             <div className="flex items-center gap-2">
               <MessageSquare className="w-5 h-5 text-primary" />
               <div>
-                <h3 className="font-bold text-sm">Real-time Workspace Chat</h3>
+                <h3 className="font-bold text-sm">Workspace Chat</h3>
                 <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                  <span className={`h-1.5 w-1.5 rounded-full ${isChatConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
-                  {isChatConnected ? 'WebSocket Connected' : 'Disconnected'}
+                  <span className={`h-1.5 w-1.5 rounded-full ${isChatConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500 animate-pulse'}`} />
+                  {isChatConnected ? 'Real-time Mode' : 'HTTP Fallback Mode (Always Online)'}
                 </p>
               </div>
             </div>
@@ -1880,11 +2066,14 @@ export default function Documents() {
           <div className="flex border-b border-border shrink-0 text-xs">
             <button 
               onClick={() => { setChatMode('group'); setChatRecipientId(null); }}
-              className={`flex-1 py-3 text-center font-semibold border-b-2 transition-all ${
+              className={`flex-1 py-3 text-center font-semibold border-b-2 transition-all relative ${
                 chatMode === 'group' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-muted-foreground hover:text-foreground'
               }`}
             >
               Workspace Group
+              {unreadGroup && (
+                <span className="absolute top-2.5 right-3 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+              )}
             </button>
             <button 
               onClick={() => {
@@ -1892,11 +2081,14 @@ export default function Documents() {
                 const other = members.find(m => m.userId !== (user?.userId || user?.id));
                 if (other) setChatRecipientId(other.userId);
               }}
-              className={`flex-1 py-3 text-center font-semibold border-b-2 transition-all ${
+              className={`flex-1 py-3 text-center font-semibold border-b-2 transition-all relative ${
                 chatMode === 'direct' ? 'border-primary text-primary bg-primary/5' : 'border-transparent text-muted-foreground hover:text-foreground'
               }`}
             >
               Direct Messages
+              {unreadDirect && (
+                <span className="absolute top-2.5 right-3 h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              )}
             </button>
           </div>
 
@@ -1910,13 +2102,16 @@ export default function Documents() {
                   <button
                     key={member.userId}
                     onClick={() => setChatRecipientId(member.userId)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all shrink-0 cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all shrink-0 cursor-pointer flex items-center gap-1.5 relative ${
                       chatRecipientId === member.userId
                         ? 'bg-primary border-primary text-primary-foreground shadow-sm shadow-primary/10'
                         : 'bg-background border-border text-muted-foreground hover:text-foreground'
                     }`}
                   >
                     {member.fullName}
+                    {unreadSenders[member.userId] && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                    )}
                   </button>
                 ))
               )}
@@ -1960,6 +2155,11 @@ export default function Documents() {
                       }`}>
                         {msg.messageText}
                       </div>
+                      {isMe && msg.recipientId && (
+                        <span className="text-[9px] text-muted-foreground px-1 mt-0.5">
+                          {msg.isRead ? 'Đã xem' : 'Đã gửi'}
+                        </span>
+                      )}
                     </div>
                   );
                 })
@@ -1973,13 +2173,16 @@ export default function Documents() {
               type="text"
               value={chatInput}
               onChange={e => setChatInput(e.target.value)}
-              placeholder={chatMode === 'group' ? 'Message workspace channel...' : 'Message member privately...'}
-              disabled={!isChatConnected}
+              placeholder={
+                !isChatConnected 
+                  ? (chatMode === 'group' ? 'Message channel (HTTP Fallback)...' : 'Message member privately (HTTP Fallback)...') 
+                  : (chatMode === 'group' ? 'Message workspace channel...' : 'Message member privately...')
+              }
               className="flex-1 bg-background border border-border rounded-lg px-3.5 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
             />
             <button 
               type="submit" 
-              disabled={!isChatConnected || !chatInput.trim()}
+              disabled={!chatInput.trim()}
               className="p-2 bg-primary text-primary-foreground rounded-lg hover:opacity-95 disabled:opacity-40 transition-opacity cursor-pointer flex items-center justify-center shrink-0"
             >
               <Send className="w-3.5 h-3.5" />

@@ -14,13 +14,14 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://127.0.0.1:8080',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'http://localhost:8080',
+        target: 'http://127.0.0.1:8080',
         ws: true,
         changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/ws/, '/api/v1/ws'),
       }
     }
   }

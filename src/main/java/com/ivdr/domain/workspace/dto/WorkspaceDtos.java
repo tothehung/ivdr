@@ -82,7 +82,8 @@ public class WorkspaceDtos {
             boolean isPrivate,
             UUID createdBy,
             LocalDateTime createdAt,
-            int memberCount
+            int memberCount,
+            String role
     ) {}
 
     /**
