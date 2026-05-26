@@ -53,6 +53,56 @@ public final class DocumentDtos {
     ) {}
 
     /**
+     * Request payload to upload/add a link as a document.
+     */
+    public record LinkUploadRequest(
+            @NotBlank(message = "Link name must not be blank")
+            String name,
+
+            @NotBlank(message = "Link URL must not be blank")
+            String url,
+
+            String description,
+
+            String[] tags
+    ) {}
+
+    /**
+     * Payload to update a document's metadata (name, description, tags).
+     */
+    public record UpdateMetadataRequest(
+            @NotBlank(message = "Document name must not be blank")
+            String name,
+
+            String description,
+
+            String[] tags
+    ) {}
+
+    /**
+     * Request payload to update a document's inline text content.
+     */
+    public record UpdateContentRequest(
+            String content
+    ) {}
+
+    /**
+     * Request payload to set or remove a password for a document.
+     */
+    public record SetPasswordRequest(
+            String password
+    ) {}
+
+    /**
+     * Request payload to verify a password to obtain access to a document.
+     */
+    public record VerifyPasswordRequest(
+            @NotBlank(message = "Password must not be blank")
+            String password
+    ) {}
+
+
+    /**
      * Query parameters for document search and pagination.
      *
      * <p>Validated at the controller boundary before being forwarded to the
@@ -115,7 +165,9 @@ public final class DocumentDtos {
             String[] tags,
             String aiSummary,
             UUID uploadedBy,
-            LocalDateTime createdAt
+            LocalDateTime createdAt,
+            UUID folderId,
+            boolean isPasswordProtected
     ) {}
 
     /**

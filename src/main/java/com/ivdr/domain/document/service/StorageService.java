@@ -250,6 +250,26 @@ public class StorageService {
     // Internal helpers
     // -------------------------------------------------------------------------
 
+    public void updateFileContent(String fileKey, byte[] bytes, String contentType) {
+        log.debug("Updating file in S3 — bucket={} key={} size={} contentType={}",
+                bucketName, fileKey, bytes.length, contentType);
+
+        PutObjectRequest putRequest = PutObjectRequest.builder()
+                .bucket(bucketName)
+                .key(fileKey)
+                .contentType(contentType)
+                .contentLength((long) bytes.length)
+                .build();
+
+        try {
+            s3Client.putObject(putRequest, RequestBody.fromBytes(bytes));
+            log.info("File updated successfully — key={}", fileKey);
+        } catch (Exception ex) {
+            log.error("S3 update failed — key={} error={}", fileKey, ex.getMessage(), ex);
+            throw ApiException.internalError("Failed to update file in storage: " + ex.getMessage());
+        }
+    }
+
     /**
      * Constructs an S3 object key using the canonical IVDR format:
      * <pre>{orgId}/{workspaceId}/{randomUUID}-{sanitisedFilename}</pre>
@@ -268,3 +288,4 @@ public class StorageService {
         return "%s/%s/%s-%s".formatted(orgId, workspaceId, UUID.randomUUID(), safeFilename);
     }
 }
+

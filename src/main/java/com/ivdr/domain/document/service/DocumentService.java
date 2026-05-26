@@ -2,9 +2,7 @@ package com.ivdr.domain.document.service;
 
 import com.ivdr.common.exception.ApiException;
 import com.ivdr.domain.audit.event.AuditEventType;
-import com.ivdr.domain.document.dto.DocumentDtos.DocumentResponse;
-import com.ivdr.domain.document.dto.DocumentDtos.DownloadUrlResponse;
-import com.ivdr.domain.document.dto.DocumentDtos.UploadRequest;
+import com.ivdr.domain.document.dto.DocumentDtos.*;
 import com.ivdr.domain.document.entity.Document;
 import com.ivdr.domain.document.repository.DocumentRepository;
 import com.ivdr.domain.ai.service.AiService;
@@ -24,11 +22,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import org.springframework.security.crypto.password.PasswordEncoder;
+
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.UUID;
+
 
 /**
  * Core service for Document lifecycle management.
@@ -83,6 +84,7 @@ public class DocumentService {
     private final SimpMessagingTemplate messagingTemplate;
     private final WorkspaceMemberRepository workspaceMemberRepository;
     private final AnalyticsService      analyticsService;
+    private final PasswordEncoder       passwordEncoder;
 
     // -------------------------------------------------------------------------
     // Upload
@@ -110,6 +112,7 @@ public class DocumentService {
      */
     @Transactional
     public DocumentResponse uploadDocument(UUID workspaceId,
+                                           UUID folderId,
                                            MultipartFile file,
                                            UploadRequest req,
                                            UserPrincipal principal) {
@@ -172,6 +175,7 @@ public class DocumentService {
                 .tags(req.tags())
                 .checksumSha256(checksum)
                 .uploadedBy(principal.userId())
+                .folderId(folderId)
                 .build();
 
         Document saved = documentRepository.save(document);
@@ -183,6 +187,45 @@ public class DocumentService {
 
         // 7 — Async AI summarisation (fire and forget)
         triggerAiSummaryAsync(saved.getId(), fileBytes, contentType);
+
+        return toResponse(saved);
+    }
+
+    @Transactional
+    public DocumentResponse uploadLink(UUID workspaceId,
+                                       UUID folderId,
+                                       LinkUploadRequest req,
+                                       UserPrincipal principal) {
+        // Enforce: OWNER or EDITOR can add links
+        WorkspaceMember membership = workspaceMemberRepository
+                .findByWorkspaceIdAndUserId(workspaceId, principal.userId())
+                .orElseThrow(() -> ApiException.forbidden("You are not a member of this workspace."));
+
+        if (membership.getRole() == WorkspaceMember.MemberRole.VIEWER) {
+            throw ApiException.forbidden("VIEWER role cannot add links. Only EDITOR or OWNER can add.");
+        }
+
+        Document document = Document.builder()
+                .workspaceId(workspaceId)
+                .organizationId(principal.organizationId())
+                .name(req.name())
+                .description(req.description())
+                .fileKey(req.url()) // Store link in fileKey
+                .fileSizeBytes(0)
+                .contentType("link") // Mark type as link
+                .version(1)
+                .status("ACTIVE")
+                .tags(req.tags())
+                .checksumSha256("")
+                .uploadedBy(principal.userId())
+                .folderId(folderId)
+                .build();
+
+        Document saved = documentRepository.save(document);
+        log.info("Link document persisted — id={} workspaceId={} name={} url={}",
+                saved.getId(), workspaceId, saved.getName(), saved.getFileKey());
+
+        publishAuditEvent(AuditEventType.DOCUMENT_UPLOADED, principal, workspaceId, saved.getId());
 
         return toResponse(saved);
     }
@@ -204,14 +247,15 @@ public class DocumentService {
     @Transactional(readOnly = true)
     public Page<DocumentResponse> listDocuments(UUID workspaceId,
                                                  String status,
+                                                 UUID folderId,
                                                  Pageable pageable,
                                                  UserPrincipal principal) {
         String resolvedStatus = (status != null && !status.isBlank()) ? status : "ACTIVE";
-        log.debug("Listing documents — workspaceId={} status={} page={} size={}",
-                workspaceId, resolvedStatus, pageable.getPageNumber(), pageable.getPageSize());
+        log.debug("Listing documents — workspaceId={} folderId={} status={} page={} size={}",
+                workspaceId, folderId, resolvedStatus, pageable.getPageNumber(), pageable.getPageSize());
 
         return documentRepository
-                .findByWorkspaceIdAndStatus(workspaceId, resolvedStatus, pageable)
+                .findByWorkspaceIdAndStatusAndFolderId(workspaceId, resolvedStatus, folderId, pageable)
                 .map(this::toResponse);
     }
 
@@ -253,6 +297,15 @@ public class DocumentService {
         Document document = documentRepository.findById(documentId)
                 .filter(d -> !"DELETED".equals(d.getStatus()))
                 .orElseThrow(() -> ApiException.notFound("Document not found: " + documentId));
+
+        if (document.getPasswordHash() != null && !document.getPasswordHash().isEmpty()) {
+            WorkspaceMember membership = workspaceMemberRepository
+                    .findByWorkspaceIdAndUserId(document.getWorkspaceId(), principal.userId())
+                    .orElseThrow(() -> ApiException.forbidden("You are not a member of this workspace."));
+            if (membership.getRole() != WorkspaceMember.MemberRole.OWNER) {
+                throw ApiException.forbidden("This document is password protected. Verification is required.");
+            }
+        }
 
         // 3 — Generate pre-signed URL with attachment Content-Disposition (forces browser download)
         int expiryMinutes = storageService.getDefaultPresignedUrlExpiryMinutes();
@@ -304,6 +357,15 @@ public class DocumentService {
         Document document = documentRepository.findById(documentId)
                 .filter(d -> !"DELETED".equals(d.getStatus()))
                 .orElseThrow(() -> ApiException.notFound("Document not found: " + documentId));
+
+        if (document.getPasswordHash() != null && !document.getPasswordHash().isEmpty()) {
+            WorkspaceMember membership = workspaceMemberRepository
+                    .findByWorkspaceIdAndUserId(document.getWorkspaceId(), principal.userId())
+                    .orElseThrow(() -> ApiException.forbidden("You are not a member of this workspace."));
+            if (membership.getRole() != WorkspaceMember.MemberRole.OWNER) {
+                throw ApiException.forbidden("This document is password protected. Verification is required.");
+            }
+        }
 
         int expiryMinutes = storageService.getDefaultPresignedUrlExpiryMinutes();
         // No filename param = inline disposition (opens in browser)
@@ -358,7 +420,159 @@ public class DocumentService {
         publishAuditEvent(AuditEventType.DOCUMENT_DELETED, principal, workspaceId, documentId);
     }
 
+    /**
+     * Updates document metadata (name, description, tags).
+     *
+     * @param workspaceId the workspace the document belongs to
+     * @param documentId  the UUID of the document to update
+     * @param req         metadata update request
+     * @param principal   the authenticated caller
+     * @return the updated document response DTO
+     */
+    @Transactional
+    public DocumentResponse updateDocument(UUID workspaceId, UUID documentId, UpdateMetadataRequest req, UserPrincipal principal) {
+        // Enforce: only OWNER or EDITOR can edit documents
+        WorkspaceMember membership = workspaceMemberRepository
+                .findByWorkspaceIdAndUserId(workspaceId, principal.userId())
+                .orElseThrow(() -> ApiException.forbidden("You are not a member of this workspace."));
+
+        if (membership.getRole() == WorkspaceMember.MemberRole.VIEWER) {
+            throw ApiException.forbidden("VIEWER role cannot edit documents. Only EDITOR or OWNER can edit.");
+        }
+
+        Document document = documentRepository.findById(documentId)
+                .filter(d -> !"DELETED".equals(d.getStatus()))
+                .filter(d -> d.getWorkspaceId().equals(workspaceId))
+                .orElseThrow(() -> ApiException.notFound("Document not found: " + documentId));
+
+        document.setName(req.name());
+        document.setDescription(req.description());
+        document.setTags(req.tags());
+        document = documentRepository.save(document);
+
+        log.info("Document metadata updated — id={} workspaceId={} userId={} role={}",
+                documentId, workspaceId, principal.userId(), membership.getRole());
+
+        // Evict analytics cache
+        try {
+            analyticsService.evictWorkspaceStats(workspaceId);
+        } catch (Exception ex) {
+            log.warn("Analytics cache eviction failed (non-critical): {}", ex.getMessage());
+        }
+
+        publishAuditEvent(AuditEventType.DOCUMENT_UPDATED, principal, workspaceId, documentId);
+
+        return toResponse(document);
+    }
+
+    @Transactional
+    public DocumentResponse updateDocumentContent(UUID workspaceId, UUID documentId, UpdateContentRequest req, UserPrincipal principal) {
+        WorkspaceMember membership = workspaceMemberRepository
+                .findByWorkspaceIdAndUserId(workspaceId, principal.userId())
+                .orElseThrow(() -> ApiException.forbidden("You are not a member of this workspace."));
+
+        if (membership.getRole() == WorkspaceMember.MemberRole.VIEWER) {
+            throw ApiException.forbidden("VIEWER role cannot edit documents. Only EDITOR or OWNER can edit.");
+        }
+
+        Document document = documentRepository.findById(documentId)
+                .filter(d -> !"DELETED".equals(d.getStatus()))
+                .filter(d -> d.getWorkspaceId().equals(workspaceId))
+                .orElseThrow(() -> ApiException.notFound("Document not found: " + documentId));
+
+        if ("link".equals(document.getContentType())) {
+            throw ApiException.badRequest("Cannot edit content of a link document.");
+        }
+
+        byte[] contentBytes = req.content() != null ? req.content().getBytes(java.nio.charset.StandardCharsets.UTF_8) : new byte[0];
+
+        // Update in S3
+        storageService.updateFileContent(document.getFileKey(), contentBytes, document.getContentType());
+
+        // Update DB attributes: version, size, checksum
+        document.setVersion(document.getVersion() + 1);
+        document.setFileSizeBytes((long) contentBytes.length);
+        document.setChecksumSha256(computeSha256(contentBytes));
+
+        document = documentRepository.save(document);
+
+        log.info("Document content updated — id={} workspaceId={} version={} size={}",
+                documentId, workspaceId, document.getVersion(), document.getFileSizeBytes());
+
+        // Evict analytics cache
+        try {
+            analyticsService.evictWorkspaceStats(workspaceId);
+        } catch (Exception ex) {
+            log.warn("Analytics cache eviction failed (non-critical): {}", ex.getMessage());
+        }
+
+        // Trigger AI summary asynchronously based on new content
+        triggerAiSummaryAsync(document.getId(), contentBytes, document.getContentType());
+
+        publishAuditEvent(AuditEventType.DOCUMENT_UPDATED, principal, workspaceId, documentId);
+
+        return toResponse(document);
+    }
+
+    @Transactional
+    public DocumentResponse setDocumentPassword(UUID workspaceId, UUID documentId, SetPasswordRequest req, UserPrincipal principal) {
+        WorkspaceMember membership = workspaceMemberRepository
+                .findByWorkspaceIdAndUserId(workspaceId, principal.userId())
+                .orElseThrow(() -> ApiException.forbidden("You are not a member of this workspace."));
+
+        if (membership.getRole() != WorkspaceMember.MemberRole.OWNER) {
+            throw ApiException.forbidden("Only OWNER can configure document password protection.");
+        }
+
+        Document document = documentRepository.findById(documentId)
+                .filter(d -> !"DELETED".equals(d.getStatus()))
+                .filter(d -> d.getWorkspaceId().equals(workspaceId))
+                .orElseThrow(() -> ApiException.notFound("Document not found: " + documentId));
+
+        if (req.password() == null || req.password().isBlank()) {
+            document.setPasswordHash(null);
+            log.info("Password protection removed for document — id={} workspaceId={}", documentId, workspaceId);
+        } else {
+            document.setPasswordHash(passwordEncoder.encode(req.password()));
+            log.info("Password protection set for document — id={} workspaceId={}", documentId, workspaceId);
+        }
+
+        document = documentRepository.save(document);
+        publishAuditEvent(AuditEventType.DOCUMENT_UPDATED, principal, workspaceId, documentId);
+
+        return toResponse(document);
+    }
+
+    @Transactional(readOnly = true)
+    public DownloadUrlResponse verifyDocumentPasswordAndGetUrl(UUID workspaceId, UUID documentId, VerifyPasswordRequest req, String type, UserPrincipal principal) {
+        Document document = documentRepository.findById(documentId)
+                .filter(d -> !"DELETED".equals(d.getStatus()))
+                .filter(d -> d.getWorkspaceId().equals(workspaceId))
+                .orElseThrow(() -> ApiException.notFound("Document not found: " + documentId));
+
+        if (document.getPasswordHash() == null || document.getPasswordHash().isEmpty()) {
+            throw ApiException.badRequest("This document is not password protected.");
+        }
+
+        if (!passwordEncoder.matches(req.password(), document.getPasswordHash())) {
+            throw ApiException.badRequest("Invalid document password.");
+        }
+
+        int expiryMinutes = storageService.getDefaultPresignedUrlExpiryMinutes();
+        String presignedUrl;
+        if ("download".equalsIgnoreCase(type)) {
+            presignedUrl = storageService.generatePresignedDownloadUrl(
+                    document.getFileKey(), expiryMinutes, document.getName());
+            publishAuditEvent(AuditEventType.DOCUMENT_DOWNLOADED, principal, workspaceId, documentId);
+        } else {
+            presignedUrl = storageService.generatePresignedDownloadUrl(document.getFileKey(), expiryMinutes);
+        }
+
+        return new DownloadUrlResponse(presignedUrl, (long) expiryMinutes * 60);
+    }
+
     // -------------------------------------------------------------------------
+
     // Async AI summarisation
     // -------------------------------------------------------------------------
 
@@ -409,7 +623,9 @@ public class DocumentService {
                 doc.getTags(),
                 doc.getAiSummary(),
                 doc.getUploadedBy(),
-                doc.getCreatedAt()
+                doc.getCreatedAt(),
+                doc.getFolderId(),
+                doc.getPasswordHash() != null && !doc.getPasswordHash().isEmpty()
         );
     }
 

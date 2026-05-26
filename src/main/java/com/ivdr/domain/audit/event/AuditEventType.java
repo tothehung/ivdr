@@ -54,6 +54,9 @@ public enum AuditEventType {
     /** An AI summarization was requested and completed for a document. */
     DOCUMENT_AI_SUMMARIZED,
 
+    /** A document's metadata was updated. */
+    DOCUMENT_UPDATED,
+
     // -------------------------------------------------------------------------
     // Workspace management
     // -------------------------------------------------------------------------

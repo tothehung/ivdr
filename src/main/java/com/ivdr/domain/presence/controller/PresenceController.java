@@ -55,7 +55,7 @@ public class PresenceController {
         if (userId == null) return;
 
         log.info("WS LEAVE workspace={} user={}", workspaceId, userId);
-        presenceService.userLeft(workspaceId, userId);
+        presenceService.userLeft(workspaceId, userId, headerAccessor.getSessionId());
     }
 
     @MessageMapping("/workspace/{workspaceId}/heartbeat")
@@ -67,7 +67,7 @@ public class PresenceController {
         if (userId == null) return;
 
         log.trace("WS HEARTBEAT workspace={} user={}", workspaceId, userId);
-        presenceService.heartbeat(workspaceId, userId);
+        presenceService.heartbeat(workspaceId, userId, headerAccessor.getSessionId());
     }
 
     @MessageMapping("/workspace/{workspaceId}/view")
@@ -79,8 +79,22 @@ public class PresenceController {
         UUID userId = extractUserId(headerAccessor);
         if (userId == null) return;
 
-        presenceService.userViewedDocument(workspaceId, userId, message.documentId());
+        presenceService.userViewedDocument(workspaceId, userId, headerAccessor.getSessionId(), message.documentId());
     }
+
+    @MessageMapping("/workspace/{workspaceId}/activity")
+    public void handleActivity(
+            @DestinationVariable UUID workspaceId,
+            ActivityMessage message,
+            SimpMessageHeaderAccessor headerAccessor) {
+
+        UUID userId = extractUserId(headerAccessor);
+        if (userId == null) return;
+
+        presenceService.updateActivity(workspaceId, userId, headerAccessor.getSessionId(), message.type(), message.detail());
+    }
+
+    public record ActivityMessage(String type, String detail) {}
 
     // =========================================================================
     // REST endpoints

@@ -1,8 +1,6 @@
 package com.ivdr.domain.document.controller;
 
-import com.ivdr.domain.document.dto.DocumentDtos.DocumentResponse;
-import com.ivdr.domain.document.dto.DocumentDtos.DownloadUrlResponse;
-import com.ivdr.domain.document.dto.DocumentDtos.UploadRequest;
+import com.ivdr.domain.document.dto.DocumentDtos.*;
 import com.ivdr.domain.document.service.DocumentService;
 import com.ivdr.security.UserPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -107,6 +105,9 @@ public class DocumentController {
             @Parameter(description = "UUID of the target workspace", required = true)
             @PathVariable UUID workspaceId,
 
+            @Parameter(description = "Optional folder ID parameter")
+            @RequestParam(value = "folderId", required = false) UUID folderId,
+
             @Parameter(description = "The file to upload", required = true)
             @RequestPart("file") MultipartFile file,
 
@@ -121,12 +122,26 @@ public class DocumentController {
 
             @AuthenticationPrincipal UserPrincipal principal
     ) {
-        log.debug("Upload request received — workspaceId={} filename={} userId={}",
-                workspaceId, file.getOriginalFilename(), principal.userId());
+        log.debug("Upload request received — workspaceId={} folderId={} filename={} userId={}",
+                workspaceId, folderId, file.getOriginalFilename(), principal.userId());
 
         UploadRequest req = new UploadRequest(name, description, tags);
-        DocumentResponse response = documentService.uploadDocument(workspaceId, file, req, principal);
+        DocumentResponse response = documentService.uploadDocument(workspaceId, folderId, file, req, principal);
 
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @PostMapping("/link")
+    public ResponseEntity<DocumentResponse> uploadLink(
+            @PathVariable UUID workspaceId,
+            @RequestParam(required = false) UUID folderId,
+            @Valid @RequestBody LinkUploadRequest req,
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        log.debug("Link upload request received — workspaceId={} folderId={} name={} url={}",
+                workspaceId, folderId, req.name(), req.url());
+
+        DocumentResponse response = documentService.uploadLink(workspaceId, folderId, req, principal);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
@@ -164,6 +179,9 @@ public class DocumentController {
             @Parameter(description = "UUID of the workspace", required = true)
             @PathVariable UUID workspaceId,
 
+            @Parameter(description = "Optional folder ID parameter")
+            @RequestParam(required = false) UUID folderId,
+
             @Parameter(description = "Lifecycle status filter. Defaults to ACTIVE.")
             @RequestParam(required = false) String status,
 
@@ -188,7 +206,7 @@ public class DocumentController {
         Pageable pageable = PageRequest.of(page, size, sort);
 
         Page<DocumentResponse> result = documentService.listDocuments(
-                workspaceId, status, pageable, principal);
+                workspaceId, status, folderId, pageable, principal);
 
         return ResponseEntity.ok(result);
     }
@@ -306,5 +324,73 @@ public class DocumentController {
 
         documentService.deleteDocument(documentId, workspaceId, principal);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Updates metadata (name, description, tags) for an existing document.
+     *
+     * <p>Only workspace EDITOR or OWNER can update document metadata.
+     *
+     * @param workspaceId the workspace UUID
+     * @param documentId  the document UUID
+     * @param req         metadata update request payload
+     * @param principal   the authenticated caller
+     * @return 200 OK with the updated document details
+     */
+    @PutMapping("/{documentId}")
+    public ResponseEntity<DocumentResponse> updateDocument(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID documentId,
+            @Valid @RequestBody UpdateMetadataRequest req,
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        log.debug("Update metadata request received — documentId={} workspaceId={} userId={}",
+                documentId, workspaceId, principal.userId());
+
+        DocumentResponse response = documentService.updateDocument(workspaceId, documentId, req, principal);
+        return ResponseEntity.ok(response);
+    }
+
+    @PutMapping("/{documentId}/content")
+    public ResponseEntity<DocumentResponse> updateDocumentContent(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID documentId,
+            @Valid @RequestBody UpdateContentRequest req,
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        log.debug("Update content request received — documentId={} workspaceId={} userId={}",
+                documentId, workspaceId, principal.userId());
+
+        DocumentResponse response = documentService.updateDocumentContent(workspaceId, documentId, req, principal);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{documentId}/password")
+    public ResponseEntity<DocumentResponse> setDocumentPassword(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID documentId,
+            @RequestBody SetPasswordRequest req,
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        log.debug("Set password request received — documentId={} workspaceId={} userId={}",
+                documentId, workspaceId, principal.userId());
+
+        DocumentResponse response = documentService.setDocumentPassword(workspaceId, documentId, req, principal);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{documentId}/verify-password")
+    public ResponseEntity<DownloadUrlResponse> verifyDocumentPassword(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID documentId,
+            @RequestParam(value = "type", defaultValue = "preview") String type,
+            @Valid @RequestBody VerifyPasswordRequest req,
+            @AuthenticationPrincipal UserPrincipal principal
+    ) {
+        log.debug("Verify password request received — documentId={} workspaceId={} type={} userId={}",
+                documentId, workspaceId, type, principal.userId());
+
+        DownloadUrlResponse response = documentService.verifyDocumentPasswordAndGetUrl(workspaceId, documentId, req, type, principal);
+        return ResponseEntity.ok(response);
     }
 }

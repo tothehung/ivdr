@@ -53,6 +53,19 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
             Pageable pageable
     );
 
+    @Query("""
+            SELECT d FROM Document d
+             WHERE d.workspaceId = :workspaceId
+               AND d.status = :status
+               AND (:folderId IS NULL AND d.folderId IS NULL OR d.folderId = :folderId)
+            """)
+    Page<Document> findByWorkspaceIdAndStatusAndFolderId(
+            @Param("workspaceId") UUID workspaceId,
+            @Param("status") String status,
+            @Param("folderId") UUID folderId,
+            Pageable pageable
+    );
+
     // -------------------------------------------------------------------------
     // Search
     // -------------------------------------------------------------------------

@@ -142,6 +142,12 @@ public class Document {
     @Column(name = "ai_summary", columnDefinition = "text")
     private String aiSummary;
 
+    @Column(name = "folder_id")
+    private UUID folderId;
+
+    @Column(name = "password_hash")
+    private String passwordHash;
+
     // -------------------------------------------------------------------------
     // Integrity
     // -------------------------------------------------------------------------
